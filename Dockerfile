@@ -40,10 +40,11 @@ COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 COPY --from=builder /app/scripts ./scripts
 
-# Create data directory for SQLite
-RUN mkdir -p /app/data && chown nextjs:nodejs /app/data
+# Create data directory and home directory for nextjs user (npm cache needs it)
+RUN mkdir -p /app/data /home/nextjs && chown -R nextjs:nodejs /app/data /home/nextjs
 
 USER nextjs
 
@@ -55,4 +56,4 @@ ENV HOSTNAME=0.0.0.0
 EXPOSE 3000
 
 # Run migrations then start standalone server
-CMD npx prisma migrate deploy && node server.js
+CMD node ./node_modules/prisma/build/index.js migrate deploy && node server.js
