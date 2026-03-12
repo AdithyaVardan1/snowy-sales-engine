@@ -1,0 +1,341 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model CommunityPost {
+  id            String    @id @default(cuid())
+  externalId    String    @unique
+  source        String    // "github_issue" | "github_discussion" | "reddit"
+  subreddit     String?
+  title         String
+  body          String
+  author        String
+  url           String
+  relevanceTag  String?
+  status        String    @default("new") // "new" | "draft_ready" | "responded" | "ignored"
+  respondedBy   String?
+  respondedAt   DateTime?
+  draftResponse String?
+  finalResponse String?
+  engagement    String?   // JSON string
+  fetchedAt     DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model ContentEntry {
+  id           String    @id @default(cuid())
+  title        String
+  description  String?
+  url          String?
+  platform     String    // "reddit" | "twitter" | "github" | "discord" | "linkedin" | "blog" | "youtube" | "whatsapp"
+  channel      String    // "community" | "social_media" | "whatsapp" | "plg" | "partnerships"
+  contentType  String    // "post" | "thread" | "pr" | "message" | "article" | "video" | "comment"
+  status       String    @default("draft") // "draft" | "scheduled" | "published"
+  publishedAt  DateTime?
+  scheduledFor DateTime?
+  author       String
+  likes        Int       @default(0)
+  replies      Int       @default(0)
+  shares       Int       @default(0)
+  clicks       Int       @default(0)
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model Partner {
+  id          String        @id @default(cuid())
+  name        String
+  platform    String        // "youtube" | "twitter" | "github" | "instagram" | "tiktok" | "telegram" | "whatsapp"
+  profileUrl  String?
+  followers   Int           @default(0)
+  category    String        // "skill_developer" | "youtuber" | "community_leader" | "api_provider"
+  status      String        @default("identified") // "identified" | "contacted" | "replied" | "negotiating" | "onboarded" | "active"
+  dealTerms   String?
+  dealDetails String?
+  email       String?
+  contactedAt DateTime?
+  onboardedAt DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  notes       PartnerNote[]
+}
+
+model PartnerNote {
+  id        String   @id @default(cuid())
+  partnerId String
+  partner   Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  content   String
+  author    String
+  createdAt DateTime @default(now())
+}
+
+model ActivityLog {
+  id        String   @id @default(cuid())
+  type      String   // "community_response" | "content_published" | "partner_outreach" | "partner_onboarded"
+  channel   String
+  details   String?
+  author    String?
+  createdAt DateTime @default(now())
+}
+
+model BlogPost {
+  id              String    @id @default(cuid())
+  title           String
+  slug            String    @unique
+  content         String
+  metaDescription String?
+  keywords        String?
+  status          String    @default("draft") // "draft" | "scheduled" | "published"
+  publishedAt     DateTime?
+  scheduledFor    DateTime?
+  generatedFrom   String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model SocialAccount {
+  id        String   @id @default(cuid())
+  platform  String   @unique // "twitter" | "linkedin"
+  cookies   String
+  username  String?
+  status    String   @default("active") // "active" | "expired"
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+model SocialPost {
+  id           String    @id @default(cuid())
+  platform     String    // "twitter" | "linkedin"
+  content      String
+  threadParts  String?   // JSON array for Twitter threads
+  status       String    @default("draft") // "draft" | "scheduled" | "posted" | "failed"
+  scheduledFor DateTime?
+  postedAt     DateTime?
+  externalId   String?
+  error        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model CronJob {
+  id         String    @id @default(cuid())
+  name       String
+  type       String    // "fetch_community" | "post_social" | "generate_blog"
+  schedule   String
+  enabled    Boolean   @default(true)
+  config     String?
+  lastRunAt  DateTime?
+  nextRunAt  DateTime?
+  lastResult String?
+  lastError  String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+}
+
+// Key-value store for runtime configuration.
+// Allows users to configure API keys / cookies from the UI
+// instead of editing .env files directly.
+model AppSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique  // e.g. "TWITTER_CT0", "TWITTER_AUTH_TOKEN", "REDDIT_SESSION_COOKIE"
+  value     String   // encrypted or plain depending on sensitivity
+  label     String?  // human-friendly label for the settings UI
+  category  String?  // "twitter" | "linkedin" | "reddit" | "ai" | "github"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ── Instagram DM Automation ─────────────────────────────────────────────────
+
+model InstagramFollower {
+  id            String    @id @default(cuid())
+  igUserId      String    @unique
+  username      String
+  fullName      String?
+  profilePicUrl String?
+  isPrivate     Boolean   @default(false)
+  isNew         Boolean   @default(true)
+  dmSent        Boolean   @default(false)
+  dmSentAt      DateTime?
+  firstSeenAt   DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model InstagramDM {
+  id         String   @id @default(cuid())
+  igUserId   String
+  username   String
+  templateId String?
+  content    String
+  status     String   @default("sent") // "sent" | "failed" | "pending"
+  threadId   String?
+  messageId  String?
+  error      String?
+  sentAt     DateTime @default(now())
+  createdAt  DateTime @default(now())
+}
+
+model InstagramTemplate {
+  id        String   @id @default(cuid())
+  name      String
+  content   String   // supports {{username}} placeholder
+  isDefault Boolean  @default(false)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model InstagramSettings {
+  id              String   @id @default(cuid())
+  autoDmEnabled   Boolean  @default(false)
+  maxDmsPerDay    Int      @default(20)
+  minDelaySeconds Int      @default(30)
+  maxDelaySeconds Int      @default(120)
+  pollIntervalMin Int      @default(60)
+  igUserId        String?
+  updatedAt       DateTime @updatedAt
+  createdAt       DateTime @default(now())
+}
+
+// ── Instagram Comment-Trigger Automation (Official API) ─────────────────────
+
+model InstagramCommentTrigger {
+  id               String               @id @default(cuid())
+  keyword          String               // e.g. "GUIDE", "LINK"
+  matchType        String               @default("contains") // "exact" | "contains" | "starts_with"
+  postFilter       String?              // optional IG media ID to restrict to specific post
+  messageType      String               @default("text") // "text" | "quick_reply" | "generic_template"
+  messagePayload   String               // JSON: full message object for Send API
+  replyToComment   Boolean              @default(false)
+  commentReplyText String?
+  isActive         Boolean              @default(true)
+  dmsSent          Int                  @default(0)
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  logs             InstagramCommentLog[]
+}
+
+model InstagramCommentLog {
+  id          String                   @id @default(cuid())
+  triggerId   String?
+  trigger     InstagramCommentTrigger?  @relation(fields: [triggerId], references: [id], onDelete: SetNull)
+  igCommentId String                   @unique
+  igUserId    String
+  username    String
+  commentText String
+  postId      String?
+  matched     Boolean                  @default(false)
+  dmSent      Boolean                  @default(false)
+  dmStatus    String?                  // "sent" | "failed" | "rate_limited" | "already_sent"
+  dmError     String?
+  dmSentAt    DateTime?
+  createdAt   DateTime                 @default(now())
+}
+
+model InstagramOAuthToken {
+  id                 String    @id @default(cuid())
+  pageId             String    @unique
+  igUserId           String?
+  appId              String
+  appSecret          String
+  accessToken        String
+  tokenExpiresAt     DateTime?
+  webhookVerifyToken String
+  isActive           Boolean   @default(true)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+}
+
+// ── SEO Tracker ─────────────────────────────────────────────────────────────
+
+model SeoRecommendation {
+  id          String    @id @default(cuid())
+  category    String    // "meta" | "content" | "technical" | "performance" | "backlinks" | "structure"
+  title       String
+  description String
+  impact      String    @default("medium") // "low" | "medium" | "high" | "critical"
+  status      String    @default("suggested") // "suggested" | "in_progress" | "done" | "dismissed"
+  pageUrl     String?   // specific page this applies to
+  details     String?   // JSON: extra data from the scan
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model SeoScan {
+  id              String   @id @default(cuid())
+  url             String
+  pagesScraped    Int      @default(0)
+  recommendations Int      @default(0)
+  summary         String?  // AI-generated summary
+  rawData         String?  // JSON: full scan results
+  createdAt       DateTime @default(now())
+}
+
+// ── AI Agent Framework ──────────────────────────────────────────────────────
+
+model Agent {
+  id                String             @id @default(cuid())
+  slug              String             @unique
+  name              String
+  description       String?
+  type              String             // "competitive_intel" | "social_media" | "business_dev" | etc.
+  status            String             @default("idle") // "idle" | "running" | "error" | "disabled"
+  schedule          String             @default("0 */6 * * *")
+  enabled           Boolean            @default(false)
+  config            String?            // JSON: agent-specific config
+  lastRunAt         DateTime?
+  lastRunDurationMs Int?
+  lastError         String?
+  runCount          Int                @default(0)
+  cronJobId         String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  observations      AgentObservation[]
+  reports           AgentReport[]
+  memory            AgentMemory[]
+}
+
+model AgentObservation {
+  id         String   @id @default(cuid())
+  agentId    String
+  agent      Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  category   String   // "twitter_activity" | "onchain_data" | "token_data" | "tvl_fees" | "website" | "content_viral"
+  subject    String   // competitor slug: "ens", "unstoppable", etc.
+  data       String   // JSON blob
+  summary    String?  // AI-generated summary
+  importance String   @default("normal") // "low" | "normal" | "high" | "critical"
+  createdAt  DateTime @default(now())
+}
+
+model AgentReport {
+  id        String   @id @default(cuid())
+  agentId   String
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  type      String   // "daily_summary" | "weekly_comparative" | "alert"
+  title     String
+  content   String   // Markdown report body
+  data      String?  // JSON: structured data for charts
+  createdAt DateTime @default(now())
+}
+
+model AgentMemory {
+  id        String   @id @default(cuid())
+  agentId   String
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  key       String
+  value     String   // JSON blob
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@unique([agentId, key])
+}
+
