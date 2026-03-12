@@ -1,8 +1,8 @@
-FROM node:18-alpine AS base
+FROM node:18-slim AS base
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
 FROM base AS deps
-RUN apk add --no-cache libc6-compat python3 make g++
+RUN apt-get update && apt-get install -y python3 make g++ --no-install-recommends && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -23,15 +23,15 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 # ── Runner ────────────────────────────────────────────────────────────────────
-FROM base AS runner
+FROM node:18-slim AS runner
 WORKDIR /app
 
-RUN apk add --no-cache python3 py3-pip openssl1-compat
+RUN apt-get update && apt-get install -y openssl python3 --no-install-recommends && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+RUN groupadd --system --gid 1001 nodejs
+RUN useradd --system --uid 1001 nextjs
 
 # Copy standalone build (smaller than full node_modules)
 COPY --from=builder /app/public ./public
