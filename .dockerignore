@@ -1,0 +1,13 @@
+node_modules
+.next
+.env*.local
+*.png
+*.pdf
+*.md
+!package.json
+!README.md
+.git
+.claude
+scripts/venv
+__pycache__
+*.pyc

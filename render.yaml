@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: snowy-sales-engine
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: DATABASE_URL
+        value: file:/app/data/sales-engine.db
+      - key: NODE_ENV
+        value: production
+      - key: AUTH_PASSWORD
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: GITHUB_REPO_OWNER
+        value: openclaw
+      - key: GITHUB_REPO_NAME
+        value: openclaw
+      - key: MONITORED_SUBREDDITS
+        value: openclaw,selfhosted,LocalLLaMA
