@@ -55,5 +55,5 @@ ENV HOSTNAME=0.0.0.0
 
 EXPOSE 3000
 
-# Run migrations then start standalone server
-CMD node ./node_modules/prisma/build/index.js migrate deploy && node server.js
+# Create/sync DB tables then start standalone server
+CMD node ./node_modules/prisma/build/index.js db push --skip-generate && node server.js
