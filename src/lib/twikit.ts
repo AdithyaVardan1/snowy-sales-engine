@@ -12,6 +12,7 @@
 import { spawn } from "child_process";
 import path from "path";
 import { db } from "./db";
+import { getSetting } from "./config";
 
 // ---------------------------------------------------------------------------
 // Cookie helpers — reads from local SQLite (same as twitter.ts getCookies)
@@ -22,51 +23,63 @@ interface CookieData {
     [key: string]: string;
 }
 
-async function getTwikitCookies(): Promise<CookieData> {
-    const account = await db.socialAccount.findUnique({
-        where: { platform: "twitter" },
-    });
-
-    if (!account || account.status === "expired") {
-        throw new Error(
-            "Twitter account not connected. Add your cookies in Social settings."
-        );
+async function getTwikitCookies(accountId?: string): Promise<CookieData> {
+    // 1. Try SocialAccount table first (set via Social page)
+    let account;
+    if (accountId) {
+        account = await db.socialAccount.findUnique({ where: { id: accountId } });
+    } else {
+        // Find default Twitter account, or first active one
+        account = await db.socialAccount.findFirst({
+            where: { platform: "twitter", isDefault: true, status: "active" },
+        }) || await db.socialAccount.findFirst({
+            where: { platform: "twitter", status: "active" },
+        });
     }
 
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(account.cookies);
-    } catch {
-        throw new Error("Stored Twitter cookies are not valid JSON.");
+    if (account && account.status !== "expired") {
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(account.cookies);
+        } catch {
+            throw new Error("Stored Twitter cookies are not valid JSON.");
+        }
+
+        // Support either array (browser export) or plain dict
+        if (Array.isArray(parsed)) {
+            const jar = parsed as Array<{ name: string; value: string }>;
+            const find = (name: string) =>
+                jar.find((c) => c.name === name)?.value || "";
+            const auth_token = find("auth_token");
+            const ct0 = find("ct0");
+            if (auth_token && ct0) return { auth_token, ct0 };
+        } else if (
+            typeof parsed === "object" &&
+            parsed !== null &&
+            "auth_token" in parsed &&
+            "ct0" in parsed
+        ) {
+            const obj = parsed as CookieData;
+            if (obj.auth_token && obj.ct0) return obj;
+        }
     }
 
-    // Support either array (browser export) or plain dict
-    if (Array.isArray(parsed)) {
-        const jar = parsed as Array<{ name: string; value: string }>;
-        const find = (name: string) =>
-            jar.find((c) => c.name === name)?.value || "";
-        const auth_token = find("auth_token");
-        const ct0 = find("ct0");
-        if (!auth_token || !ct0)
-            throw new Error("Cookies array missing auth_token or ct0.");
-        return { auth_token, ct0 };
-    }
+    // 2. Fall back to AppSetting table (set via Settings page) or env vars
+    const ct0 = await getSetting("TWITTER_CT0") || "";
+    const auth_token = await getSetting("TWITTER_AUTH_TOKEN") || "";
 
-    if (
-        typeof parsed === "object" &&
-        parsed !== null &&
-        "auth_token" in parsed &&
-        "ct0" in parsed
-    ) {
-        const obj = parsed as CookieData;
-        if (!obj.auth_token || !obj.ct0)
-            throw new Error("Cookie object missing auth_token or ct0.");
-        return obj;
-    }
+    if (ct0 && auth_token) return { auth_token, ct0 };
 
     throw new Error(
-        "Unrecognized cookie format — expected {auth_token, ct0} or a cookie array."
+        "Twitter account not connected. Add your cookies in Settings or the Social page."
     );
+}
+
+/** Get all active Twitter accounts */
+export async function getAllTwitterAccounts() {
+    return db.socialAccount.findMany({
+        where: { platform: "twitter", status: "active" },
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -79,7 +92,7 @@ function projectRoot(): string {
 }
 
 interface BridgePayload {
-    action: "tweet" | "reply" | "thread" | "search" | "dm";
+    action: "tweet" | "reply" | "thread" | "search" | "dm" | "get_dms" | "get_user";
     text?: string;
     reply_to?: string;
     tweets?: string[];
@@ -87,6 +100,27 @@ interface BridgePayload {
     target_username?: string;
     count?: number;
     cookies: CookieData;
+}
+
+interface DMConversation {
+    id: string;
+    participants: Array<{ id: string; username: string; name: string }>;
+    messages: Array<{
+        id: string;
+        text: string;
+        sender_id: string;
+        created_at: string;
+    }>;
+}
+
+interface TwitterUserInfo {
+    id: string;
+    username: string;
+    name: string;
+    bio: string;
+    followers: number;
+    following: number;
+    profile_url: string;
 }
 
 interface BridgeResult {
@@ -97,6 +131,8 @@ interface BridgeResult {
     count?: number;
     error?: string;
     ids_so_far?: string[];
+    conversations?: DMConversation[];
+    user?: TwitterUserInfo;
     tweets?: Array<{
         id: string;
         text: string;
@@ -212,12 +248,13 @@ function humanDelay(minMs: number, maxMs: number): Promise<void> {
 
 export async function postTweetViaTwikit(
     text: string,
-    replyToId?: string
+    replyToId?: string,
+    accountId?: string
 ): Promise<{ id: string; text: string }> {
     // Note: X Premium allows up to 25,000 chars — let Twitter enforce limits natively.
     enforceRateLimit();
 
-    const cookies = await getTwikitCookies();
+    const cookies = await getTwikitCookies(accountId);
 
     const payload: BridgePayload = {
         action: replyToId ? "reply" : "tweet",
@@ -238,12 +275,13 @@ export async function postTweetViaTwikit(
             !/daily limit|rate limit|duplicate|187|344/i.test(errMsg);
 
         if (isRealAuthFailure) {
-            await db.socialAccount
-                .update({
-                    where: { platform: "twitter" },
-                    data: { status: "expired" },
-                })
-                .catch(() => { });
+            // Mark the account as expired
+            if (accountId) {
+                await db.socialAccount.update({ where: { id: accountId }, data: { status: "expired" } }).catch(() => { });
+            } else {
+                const acct = await db.socialAccount.findFirst({ where: { platform: "twitter", isDefault: true } });
+                if (acct) await db.socialAccount.update({ where: { id: acct.id }, data: { status: "expired" } }).catch(() => { });
+            }
             throw new Error(
                 "Twitter cookies may be expired. Update them in Social settings. " +
                 `(Twikit: ${errMsg})`
@@ -261,7 +299,8 @@ export async function postTweetViaTwikit(
 }
 
 export async function postThreadViaTwikit(
-    tweets: string[]
+    tweets: string[],
+    accountId?: string
 ): Promise<{ ids: string[]; count: number }> {
     if (tweets.length === 0) throw new Error("Thread is empty.");
     if (tweets.length > 25)
@@ -269,7 +308,7 @@ export async function postThreadViaTwikit(
 
     enforceRateLimit();
 
-    const cookies = await getTwikitCookies();
+    const cookies = await getTwikitCookies(accountId);
 
     // Send the ENTIRE thread to one Python process — it handles reply chaining internally.
     // This is faster (one process startup) and more reliable than spawning N processes.
@@ -285,9 +324,13 @@ export async function postThreadViaTwikit(
             !/daily limit|rate limit|duplicate|187|344/i.test(errMsg);
 
         if (isRealAuthFailure) {
-            await db.socialAccount
-                .update({ where: { platform: "twitter" }, data: { status: "expired" } })
-                .catch(() => { });
+            // Mark the account as expired
+            if (accountId) {
+                await db.socialAccount.update({ where: { id: accountId }, data: { status: "expired" } }).catch(() => { });
+            } else {
+                const acct = await db.socialAccount.findFirst({ where: { platform: "twitter", isDefault: true } });
+                if (acct) await db.socialAccount.update({ where: { id: acct.id }, data: { status: "expired" } }).catch(() => { });
+            }
             throw new Error(
                 `Twitter cookies may be expired. Update them in Social settings. (Twikit: ${errMsg})${suffix}`
             );
@@ -307,12 +350,13 @@ export async function postThreadViaTwikit(
 
 export async function searchTweetsViaTwikit(
     query: string,
-    count: number = 20
+    count: number = 20,
+    accountId?: string
 ): Promise<BridgeResult["tweets"]> {
     enforceRateLimit();
     recordAction();
 
-    const cookies = await getTwikitCookies();
+    const cookies = await getTwikitCookies(accountId);
     const result = await runBridge({ action: "search", query, count, cookies });
 
     if (!result.success) {
@@ -325,12 +369,13 @@ export async function searchTweetsViaTwikit(
 
 export async function sendDMViaTwikit(
     target_username: string,
-    text: string
+    text: string,
+    accountId?: string
 ): Promise<{ dm_id: string; text: string }> {
     enforceRateLimit();
     recordAction();
 
-    const cookies = await getTwikitCookies();
+    const cookies = await getTwikitCookies(accountId);
     const result = await runBridge({
         action: "dm",
         target_username,
@@ -346,12 +391,13 @@ export async function sendDMViaTwikit(
             !/daily limit|rate limit|duplicate|187|344/i.test(errMsg);
 
         if (isRealAuthFailure) {
-            await db.socialAccount
-                .update({
-                    where: { platform: "twitter" },
-                    data: { status: "expired" },
-                })
-                .catch(() => { });
+            // Mark the account as expired
+            if (accountId) {
+                await db.socialAccount.update({ where: { id: accountId }, data: { status: "expired" } }).catch(() => { });
+            } else {
+                const acct = await db.socialAccount.findFirst({ where: { platform: "twitter", isDefault: true } });
+                if (acct) await db.socialAccount.update({ where: { id: acct.id }, data: { status: "expired" } }).catch(() => { });
+            }
             throw new Error(
                 "Twitter cookies may be expired. Update them in Social settings. " +
                 `(Twikit: ${errMsg})`
@@ -364,3 +410,32 @@ export async function sendDMViaTwikit(
     console.log(`[Twikit] Sent DM to ${target_username} (${dmId})`);
     return { dm_id: dmId, text };
 }
+
+export async function getDMInboxViaTwikit(
+    accountId?: string
+): Promise<DMConversation[]> {
+    const cookies = await getTwikitCookies(accountId);
+    const result = await runBridge({ action: "get_dms", cookies });
+
+    if (!result.success) {
+        throw new Error(`Twikit get_dms failed: ${result.error || "Unknown error"}`);
+    }
+
+    return result.conversations ?? [];
+}
+
+export async function getUserInfoViaTwikit(
+    username: string,
+    accountId?: string
+): Promise<TwitterUserInfo> {
+    const cookies = await getTwikitCookies(accountId);
+    const result = await runBridge({ action: "get_user", target_username: username, cookies });
+
+    if (!result.success) {
+        throw new Error(`Twikit get_user failed: ${result.error || "Unknown error"}`);
+    }
+
+    return result.user!;
+}
+
+export type { DMConversation, TwitterUserInfo };

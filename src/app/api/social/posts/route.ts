@@ -29,6 +29,7 @@ export async function POST(request: NextRequest) {
       threadParts: body.threadParts ? JSON.stringify(body.threadParts) : null,
       status: body.status || "draft",
       scheduledFor: body.scheduledFor ? new Date(body.scheduledFor) : null,
+      socialAccountId: body.socialAccountId || null,
     },
   });
 

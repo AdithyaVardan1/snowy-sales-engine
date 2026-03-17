@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
         const tokenData = await exchangeLinkedInCode(code, REDIRECT_URI);
         const profile = await getLinkedInMe(tokenData.access_token);
 
-        await saveLinkedInToken(tokenData.access_token, tokenData.expires_in, profile.name);
+        await saveLinkedInToken(tokenData.access_token, tokenData.expires_in, profile.name, profile.urn);
 
         // Log the URN so the user can add it to .env.local
         console.log(

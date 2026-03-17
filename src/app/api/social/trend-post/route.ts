@@ -259,93 +259,105 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Publish all posts — alternate value/promo
+  // Get all active accounts for fan-out
+  const allAccounts = await db.socialAccount.findMany({
+    where: { status: "active", platform: { in: platforms } },
+  });
+
+  // Publish all posts — fan out to all active accounts per platform
   const results: Array<{
     topicTitle: string;
     platform: string;
     type: string;
+    accountLabel?: string;
     success: boolean;
     error?: string;
   }> = [];
 
   for (const post of postsToPublish) {
-    try {
-      // Create SocialPost record
-      const socialPost = await db.socialPost.create({
-        data: {
-          platform: post.platform,
-          content: post.content,
-          status: "scheduled",
-        },
-      });
-
-      // Publish
-      let externalId = "";
-      if (post.platform === "twitter") {
-        // Check if content is too long for single tweet → thread
-        if (post.content.length > 280 && post.content.includes("\n\n")) {
-          const parts = post.content.split("\n\n").filter((p) => p.trim());
-          if (parts.length > 1) {
-            const result = await postThread(parts);
-            externalId = result.ids[0] || "";
-          } else {
-            const result = await postTweet(post.content.slice(0, 280));
-            externalId = result.id;
-          }
-        } else {
-          const result = await postTweet(post.content.slice(0, 280));
-          externalId = result.id;
-        }
-      } else if (post.platform === "linkedin") {
-        const result = await postLinkedInUpdate(post.content);
-        externalId = result.id || "";
-      }
-
-      // Mark posted
-      await db.socialPost.update({
-        where: { id: socialPost.id },
-        data: {
-          status: "posted",
-          postedAt: new Date(),
-          externalId,
-          error: null,
-        },
-      });
-
-      // Log
-      await db.activityLog.create({
-        data: {
-          type: "content_published",
-          channel: "social_media",
-          details: JSON.stringify({
-            socialPostId: socialPost.id,
-            platform: post.platform,
-            externalId,
-            source: "trend_post",
-            postType: post.type,
-            topicTitle: post.topicTitle,
-          }),
-        },
-      });
-
-      results.push({
-        topicTitle: post.topicTitle,
-        platform: post.platform,
-        type: post.type,
-        success: true,
-      });
-    } catch (err: any) {
+    const platformAccounts = allAccounts.filter((a) => a.platform === post.platform);
+    if (platformAccounts.length === 0) {
       results.push({
         topicTitle: post.topicTitle,
         platform: post.platform,
         type: post.type,
         success: false,
-        error: err?.message || String(err),
+        error: `${post.platform} account not connected.`,
       });
-      console.error(
-        `[TrendPost] Failed ${post.platform} ${post.type} for "${post.topicTitle}":`,
-        err
-      );
+      continue;
+    }
+
+    for (const account of platformAccounts) {
+      try {
+        const socialPost = await db.socialPost.create({
+          data: {
+            platform: post.platform,
+            content: post.content,
+            status: "scheduled",
+            socialAccountId: account.id,
+          },
+        });
+
+        let externalId = "";
+        if (post.platform === "twitter") {
+          if (post.content.length > 280 && post.content.includes("\n\n")) {
+            const parts = post.content.split("\n\n").filter((p) => p.trim());
+            if (parts.length > 1) {
+              const result = await postThread(parts, account.id);
+              externalId = result.ids[0] || "";
+            } else {
+              const result = await postTweet(post.content.slice(0, 280), undefined, account.id);
+              externalId = result.id;
+            }
+          } else {
+            const result = await postTweet(post.content.slice(0, 280), undefined, account.id);
+            externalId = result.id;
+          }
+        } else if (post.platform === "linkedin") {
+          const result = await postLinkedInUpdate(post.content, account.id);
+          externalId = result.id || "";
+        }
+
+        await db.socialPost.update({
+          where: { id: socialPost.id },
+          data: { status: "posted", postedAt: new Date(), externalId, error: null },
+        });
+
+        await db.activityLog.create({
+          data: {
+            type: "content_published",
+            channel: "social_media",
+            details: JSON.stringify({
+              socialPostId: socialPost.id,
+              platform: post.platform,
+              externalId,
+              socialAccountId: account.id,
+              accountLabel: account.label,
+              source: "trend_post",
+              postType: post.type,
+              topicTitle: post.topicTitle,
+            }),
+          },
+        });
+
+        results.push({
+          topicTitle: post.topicTitle,
+          platform: post.platform,
+          type: post.type,
+          accountLabel: account.label,
+          success: true,
+        });
+      } catch (err: any) {
+        results.push({
+          topicTitle: post.topicTitle,
+          platform: post.platform,
+          type: post.type,
+          accountLabel: account.label,
+          success: false,
+          error: err?.message || String(err),
+        });
+        console.error(`[TrendPost] Failed ${post.platform}/${account.label} ${post.type} for "${post.topicTitle}":`, err);
+      }
     }
   }
 

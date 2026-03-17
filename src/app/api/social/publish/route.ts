@@ -15,21 +15,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Post not found" }, { status: 404 });
   }
 
+  const accountId = socialPost.socialAccountId || undefined;
+
   try {
     let externalId = "";
 
     if (socialPost.platform === "twitter") {
-      // Check if it's a thread
       if (socialPost.threadParts) {
         const parts = JSON.parse(socialPost.threadParts) as string[];
-        const result = await postThread(parts);
+        const result = await postThread(parts, accountId);
         externalId = result.ids[0] || "";
       } else {
-        const result = await postTweet(socialPost.content);
+        const result = await postTweet(socialPost.content, undefined, accountId);
         externalId = result.id;
       }
     } else if (socialPost.platform === "linkedin") {
-      const result = await postLinkedInUpdate(socialPost.content);
+      const result = await postLinkedInUpdate(socialPost.content, accountId);
       externalId = result.id || "";
     } else {
       return NextResponse.json({ error: "Unsupported platform" }, { status: 400 });

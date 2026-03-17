@@ -1,4 +1,6 @@
-import { postTweetViaTwikit, postThreadViaTwikit, searchTweetsViaTwikit, sendDMViaTwikit } from "./twikit";
+import { postTweetViaTwikit, postThreadViaTwikit, searchTweetsViaTwikit, sendDMViaTwikit, getAllTwitterAccounts, getDMInboxViaTwikit, getUserInfoViaTwikit } from "./twikit";
+export { getAllTwitterAccounts, getDMInboxViaTwikit as getDMInbox, getUserInfoViaTwikit as getUserInfo } from "./twikit";
+export type { DMConversation, TwitterUserInfo } from "./twikit";
 
 // ---------------------------------------------------------------------------
 // Cookie types — supports full jar export or simple ct0+auth_token
@@ -58,20 +60,20 @@ function recordAction() {
 // ---------------------------------------------------------------------------
 export async function postTweet(
   text: string,
-  replyToId?: string
+  replyToId?: string,
+  accountId?: string
 ): Promise<{ id: string; text: string }> {
-  // Delegated to Twikit Python sidecar (cookie-based, avoids GraphQL bot detection)
-  return postTweetViaTwikit(text, replyToId);
+  return postTweetViaTwikit(text, replyToId, accountId);
 }
 
 // ---------------------------------------------------------------------------
 // Post a thread
 // ---------------------------------------------------------------------------
 export async function postThread(
-  tweets: string[]
+  tweets: string[],
+  accountId?: string
 ): Promise<{ ids: string[]; count: number }> {
-  // Delegated to Twikit Python sidecar (cookie-based, avoids GraphQL bot detection)
-  return postThreadViaTwikit(tweets);
+  return postThreadViaTwikit(tweets, accountId);
 }
 
 // ---------------------------------------------------------------------------
@@ -79,7 +81,8 @@ export async function postThread(
 // ---------------------------------------------------------------------------
 export async function searchTweets(
   query: string,
-  count: number = 20
+  count: number = 20,
+  accountId?: string
 ): Promise<
   Array<{
     id: string;
@@ -93,7 +96,7 @@ export async function searchTweets(
     url: string;
   }>
 > {
-  return searchTweetsViaTwikit(query, count) as Promise<
+  return searchTweetsViaTwikit(query, count, accountId) as Promise<
     Array<{
       id: string;
       text: string;
@@ -113,10 +116,10 @@ export async function searchTweets(
 // ---------------------------------------------------------------------------
 export async function sendTwitterDM(
   username: string,
-  text: string
+  text: string,
+  accountId?: string
 ): Promise<{ dm_id: string; text: string }> {
-  // Delegated to Twikit Python sidecar
-  return sendDMViaTwikit(username, text);
+  return sendDMViaTwikit(username, text, accountId);
 }
 
 // ---------------------------------------------------------------------------

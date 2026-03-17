@@ -4,7 +4,9 @@ import { loginInstagram, checkInstagramSession } from "@/lib/instagram";
 
 export async function GET() {
   try {
-    const account = await db.socialAccount.findUnique({
+    const account = await db.socialAccount.findFirst({
+      where: { platform: "instagram", isDefault: true },
+    }) || await db.socialAccount.findFirst({
       where: { platform: "instagram" },
     });
 
@@ -31,7 +33,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { username, password } = await request.json();
+    const { username, password, verificationCode, partialSessionJson } = await request.json();
 
     if (!username || !password) {
       return NextResponse.json(
@@ -40,7 +42,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await loginInstagram(username, password);
+    const result = await loginInstagram(username, password, verificationCode, partialSessionJson);
 
     return NextResponse.json({
       connected: true,
@@ -49,16 +51,22 @@ export async function POST(request: NextRequest) {
     });
   } catch (error: any) {
     const msg = error.message || "Login failed";
-    const status = /two_factor|challenge/i.test(msg) ? 403 : 500;
-    return NextResponse.json({ error: msg }, { status });
+    const partialSession = error.partialSessionJson || undefined;
+    // Return 2FA/challenge flag so frontend can show verification options
+    if (/two_factor/i.test(msg) || /challenge/i.test(msg)) {
+      return NextResponse.json(
+        { error: msg, needs2FA: true, partialSessionJson: partialSession },
+        { status: 403 }
+      );
+    }
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
 
 export async function DELETE() {
   try {
-    await db.socialAccount
-      .delete({ where: { platform: "instagram" } })
-      .catch(() => {});
+    const acct = await db.socialAccount.findFirst({ where: { platform: "instagram" } });
+    if (acct) await db.socialAccount.delete({ where: { id: acct.id } }).catch(() => {});
 
     return NextResponse.json({ success: true });
   } catch (error: any) {

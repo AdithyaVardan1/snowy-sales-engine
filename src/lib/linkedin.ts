@@ -13,44 +13,63 @@
  */
 
 import { db } from "./db";
+import { getSetting } from "./config";
 
 // ─────────────────────────────────────────────
 // Token management
 // ─────────────────────────────────────────────
 
-export async function getLinkedInToken(): Promise<string> {
-  // 1. Check DB-stored token first (set via OAuth callback)
-  const account = await db.socialAccount.findUnique({
-    where: { platform: "linkedin" },
-  });
+export async function getLinkedInToken(accountId?: string): Promise<string> {
+  let account;
+  if (accountId) {
+    account = await db.socialAccount.findUnique({ where: { id: accountId } });
+  } else {
+    account = await db.socialAccount.findFirst({
+      where: { platform: "linkedin", isDefault: true, status: "active" },
+    }) || await db.socialAccount.findFirst({
+      where: { platform: "linkedin", status: "active" },
+    });
+  }
 
   if (account && account.status === "active") {
     const cookies = JSON.parse(account.cookies) as { access_token?: string };
     if (cookies.access_token) return cookies.access_token;
   }
 
-  // 2. Fall back to env var (manual paste)
-  const envToken = process.env.LINKEDIN_ACCESS_TOKEN;
+  // Fall back to AppSetting table (set via Settings page) or env var
+  const envToken = await getSetting("LINKEDIN_ACCESS_TOKEN");
   if (envToken) return envToken;
 
   throw new Error(
-    "LinkedIn not connected. Complete OAuth flow or set LINKEDIN_ACCESS_TOKEN in .env.local"
+    "LinkedIn not connected. Complete OAuth flow or add your token in Settings."
   );
+}
+
+/** Get all active LinkedIn accounts */
+export async function getAllLinkedInAccounts() {
+  return db.socialAccount.findMany({
+    where: { platform: "linkedin", status: "active" },
+  });
 }
 
 export async function saveLinkedInToken(
   accessToken: string,
   expiresIn: number,
-  username?: string
+  username?: string,
+  personUrn?: string,
+  label?: string
 ): Promise<void> {
-  const payload = JSON.stringify({ access_token: accessToken, expires_in: expiresIn });
+  const payload = JSON.stringify({ access_token: accessToken, expires_in: expiresIn, person_urn: personUrn });
+  const accountLabel = label || username || "default";
   await db.socialAccount.upsert({
-    where: { platform: "linkedin" },
+    where: { platform_label: { platform: "linkedin", label: accountLabel } },
     create: {
       platform: "linkedin",
+      label: accountLabel,
       cookies: payload,
       username: username ?? "",
       status: "active",
+      isDefault: true,
     },
     update: {
       cookies: payload,
@@ -64,21 +83,43 @@ export async function saveLinkedInToken(
 // Posting
 // ─────────────────────────────────────────────
 
-function getPersonUrn(): string {
-  const urn = process.env.LINKEDIN_PERSON_URN;
+async function getPersonUrn(accountId?: string): Promise<string> {
+  // Try to get personUrn from the account's stored credentials
+  if (accountId) {
+    const account = await db.socialAccount.findUnique({ where: { id: accountId } });
+    if (account) {
+      const creds = JSON.parse(account.cookies) as { person_urn?: string };
+      if (creds.person_urn) return creds.person_urn;
+    }
+  } else {
+    // Check default account
+    const account = await db.socialAccount.findFirst({
+      where: { platform: "linkedin", isDefault: true, status: "active" },
+    }) || await db.socialAccount.findFirst({
+      where: { platform: "linkedin", status: "active" },
+    });
+    if (account) {
+      const creds = JSON.parse(account.cookies) as { person_urn?: string };
+      if (creds.person_urn) return creds.person_urn;
+    }
+  }
+
+  // Fall back to global setting
+  const urn = await getSetting("LINKEDIN_PERSON_URN");
   if (!urn) {
     throw new Error(
-      "LINKEDIN_PERSON_URN not set. After connecting, call /api/social/linkedin-me to get it."
+      "LINKEDIN_PERSON_URN not set. After connecting, call /api/social/linkedin-me to get it, then add it in Settings."
     );
   }
   return urn;
 }
 
 export async function postLinkedInUpdate(
-  text: string
+  text: string,
+  accountId?: string
 ): Promise<{ success: boolean; id?: string }> {
-  const token = await getLinkedInToken();
-  const personUrn = getPersonUrn();
+  const token = await getLinkedInToken(accountId);
+  const personUrn = await getPersonUrn(accountId);
 
   const payload = {
     author: personUrn,
@@ -110,10 +151,12 @@ export async function postLinkedInUpdate(
 
     // Mark token as expired so the UI prompts re-auth
     if (response.status === 401) {
-      await db.socialAccount.update({
-        where: { platform: "linkedin" },
-        data: { status: "expired" },
-      }).catch(() => { }); // ignore if no record exists
+      if (accountId) {
+        await db.socialAccount.update({ where: { id: accountId }, data: { status: "expired" } }).catch(() => { });
+      } else {
+        const acct = await db.socialAccount.findFirst({ where: { platform: "linkedin", isDefault: true } });
+        if (acct) await db.socialAccount.update({ where: { id: acct.id }, data: { status: "expired" } }).catch(() => { });
+      }
       throw new Error("LinkedIn token expired. Please re-authenticate.");
     }
 
@@ -130,9 +173,9 @@ export async function postLinkedInUpdate(
 // OAuth helpers
 // ─────────────────────────────────────────────
 
-export function getLinkedInAuthUrl(redirectUri: string): string {
-  const clientId = process.env.LINKEDIN_CLIENT_ID;
-  if (!clientId) throw new Error("LINKEDIN_CLIENT_ID not set in .env.local");
+export async function getLinkedInAuthUrl(redirectUri: string): Promise<string> {
+  const clientId = await getSetting("LINKEDIN_CLIENT_ID");
+  if (!clientId) throw new Error("LINKEDIN_CLIENT_ID not set. Add it in Settings.");
 
   const params = new URLSearchParams({
     response_type: "code",
@@ -149,10 +192,10 @@ export async function exchangeLinkedInCode(
   code: string,
   redirectUri: string
 ): Promise<{ access_token: string; expires_in: number }> {
-  const clientId = process.env.LINKEDIN_CLIENT_ID;
-  const clientSecret = process.env.LINKEDIN_CLIENT_SECRET;
+  const clientId = await getSetting("LINKEDIN_CLIENT_ID");
+  const clientSecret = await getSetting("LINKEDIN_CLIENT_SECRET");
   if (!clientId || !clientSecret) {
-    throw new Error("LINKEDIN_CLIENT_ID or LINKEDIN_CLIENT_SECRET not set");
+    throw new Error("LINKEDIN_CLIENT_ID or LINKEDIN_CLIENT_SECRET not set. Add them in Settings.");
   }
 
   const params = new URLSearchParams({

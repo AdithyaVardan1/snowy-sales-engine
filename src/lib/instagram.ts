@@ -14,13 +14,44 @@ import { db } from "./db";
 // ---------------------------------------------------------------------------
 
 interface BridgePayload {
-  action: "login" | "check_session" | "get_followers" | "send_dm" | "get_user_info";
+  action: "login" | "check_session" | "get_followers" | "send_dm" | "get_user_info" | "get_user_by_username" | "get_dm_inbox" | "search_users";
   username?: string;
   password?: string;
+  verification_code?: string;
+  partial_session_json?: string;
   session_json?: string;
   user_id?: string;
   text?: string;
   amount?: number;
+  query?: string;
+}
+
+export interface IGUserInfo {
+  user_id: string;
+  username: string;
+  full_name: string;
+  biography: string;
+  follower_count: number;
+  following_count: number;
+  media_count: number;
+  is_private: boolean;
+  is_business: boolean;
+  profile_pic_url: string;
+}
+
+export interface IGDMConversation {
+  thread_id: string;
+  participants: Array<{
+    user_id: string;
+    username: string;
+    full_name: string;
+  }>;
+  messages: Array<{
+    id: string;
+    sender_id: string;
+    text: string;
+    timestamp: string;
+  }>;
 }
 
 interface BridgeResult {
@@ -42,18 +73,32 @@ interface BridgeResult {
   following_count?: number;
   full_name?: string;
   profile_pic_url?: string;
+  biography?: string;
+  media_count?: number;
+  is_private?: boolean;
+  is_business?: boolean;
+  conversations?: IGDMConversation[];
+  users?: IGUserInfo[];
   error?: string;
   code?: string;
+  partial_session_json?: string;
 }
 
 // ---------------------------------------------------------------------------
 // Session helpers
 // ---------------------------------------------------------------------------
 
-export async function getInstagramSession(): Promise<string> {
-  const account = await db.socialAccount.findUnique({
-    where: { platform: "instagram" },
-  });
+export async function getInstagramSession(accountId?: string): Promise<string> {
+  let account;
+  if (accountId) {
+    account = await db.socialAccount.findUnique({ where: { id: accountId } });
+  } else {
+    account = await db.socialAccount.findFirst({
+      where: { platform: "instagram", isDefault: true, status: "active" },
+    }) || await db.socialAccount.findFirst({
+      where: { platform: "instagram", status: "active" },
+    });
+  }
 
   if (!account || account.status === "expired") {
     throw new Error(
@@ -64,13 +109,13 @@ export async function getInstagramSession(): Promise<string> {
   return account.cookies; // session_json stored directly
 }
 
-async function markExpired() {
-  await db.socialAccount
-    .update({
-      where: { platform: "instagram" },
-      data: { status: "expired" },
-    })
-    .catch(() => {});
+async function markExpired(accountId?: string) {
+  if (accountId) {
+    await db.socialAccount.update({ where: { id: accountId }, data: { status: "expired" } }).catch(() => {});
+  } else {
+    const acct = await db.socialAccount.findFirst({ where: { platform: "instagram", isDefault: true } });
+    if (acct) await db.socialAccount.update({ where: { id: acct.id }, data: { status: "expired" } }).catch(() => {});
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -145,22 +190,37 @@ function runBridge(payload: BridgePayload): Promise<BridgeResult> {
 
 export async function loginInstagram(
   username: string,
-  password: string
+  password: string,
+  verificationCode?: string,
+  partialSessionJson?: string
 ): Promise<{ sessionJson: string; username: string; userId: string }> {
-  const result = await runBridge({ action: "login", username, password });
+  const result = await runBridge({
+    action: "login",
+    username,
+    password,
+    ...(verificationCode && { verification_code: verificationCode }),
+    ...(partialSessionJson && { partial_session_json: partialSessionJson }),
+  });
 
   if (!result.success) {
-    throw new Error(result.error || "Instagram login failed");
+    // Attach partial session to error so caller can pass it back on retry
+    const err: any = new Error(result.error || "Instagram login failed");
+    err.code = result.code;
+    err.partialSessionJson = result.partial_session_json;
+    throw err;
   }
 
   // Store session in SocialAccount
+  const accountLabel = result.username || "default";
   await db.socialAccount.upsert({
-    where: { platform: "instagram" },
+    where: { platform_label: { platform: "instagram", label: accountLabel } },
     create: {
       platform: "instagram",
+      label: accountLabel,
       cookies: result.session_json!,
       username: result.username,
       status: "active",
+      isDefault: true,
     },
     update: {
       cookies: result.session_json!,
@@ -300,5 +360,118 @@ export async function getInstagramUserInfo(): Promise<{
     followerCount: result.follower_count || 0,
     followingCount: result.following_count || 0,
     profilePicUrl: result.profile_pic_url || "",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// New: get user info by username (for prospects)
+// ---------------------------------------------------------------------------
+
+export async function getInstagramUserByUsername(
+  username: string,
+  accountId?: string
+): Promise<IGUserInfo> {
+  const sessionJson = await getInstagramSession(accountId);
+
+  const result = await runBridge({
+    action: "get_user_by_username",
+    session_json: sessionJson,
+    username,
+  });
+
+  if (!result.success) {
+    const errMsg = result.error || "Failed to get user info";
+    if (/session expired|login required/i.test(errMsg)) {
+      await markExpired(accountId);
+    }
+    throw new Error(errMsg);
+  }
+
+  return {
+    user_id: result.user_id!,
+    username: result.username!,
+    full_name: result.full_name || "",
+    biography: result.biography || "",
+    follower_count: result.follower_count || 0,
+    following_count: result.following_count || 0,
+    media_count: result.media_count || 0,
+    is_private: result.is_private || false,
+    is_business: result.is_business || false,
+    profile_pic_url: result.profile_pic_url || "",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// New: get DM inbox (for polling replies)
+// ---------------------------------------------------------------------------
+
+export async function getInstagramDMInbox(
+  accountId?: string,
+  amount: number = 20
+): Promise<IGDMConversation[]> {
+  const sessionJson = await getInstagramSession(accountId);
+
+  const result = await runBridge({
+    action: "get_dm_inbox",
+    session_json: sessionJson,
+    amount,
+  });
+
+  if (!result.success) {
+    const errMsg = result.error || "Failed to fetch DM inbox";
+    if (/session expired|login required/i.test(errMsg)) {
+      await markExpired(accountId);
+    }
+    throw new Error(errMsg);
+  }
+
+  return result.conversations || [];
+}
+
+// ---------------------------------------------------------------------------
+// New: search users (for finding prospects)
+// ---------------------------------------------------------------------------
+
+export async function searchInstagramUsers(
+  query: string,
+  accountId?: string,
+  amount: number = 10
+): Promise<IGUserInfo[]> {
+  const sessionJson = await getInstagramSession(accountId);
+
+  const result = await runBridge({
+    action: "search_users",
+    session_json: sessionJson,
+    query,
+    amount,
+  });
+
+  if (!result.success) {
+    const errMsg = result.error || "Failed to search users";
+    if (/session expired|login required/i.test(errMsg)) {
+      await markExpired(accountId);
+    }
+    throw new Error(errMsg);
+  }
+
+  return result.users || [];
+}
+
+// ---------------------------------------------------------------------------
+// New: send DM by username (resolves user_id automatically)
+// ---------------------------------------------------------------------------
+
+export async function sendInstagramDMByUsername(
+  username: string,
+  text: string,
+  accountId?: string
+): Promise<{ threadId: string; messageId: string; userId: string }> {
+  // First resolve the username to a user_id
+  const userInfo = await getInstagramUserByUsername(username, accountId);
+  const dmResult = await sendInstagramDM(userInfo.user_id, text);
+
+  return {
+    ...dmResult,
+    userId: userInfo.user_id,
   };
 }

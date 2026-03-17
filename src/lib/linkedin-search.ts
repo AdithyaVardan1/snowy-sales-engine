@@ -19,16 +19,20 @@ interface LinkedInPost {
 
 const VOYAGER_BASE = "https://www.linkedin.com/voyager/api";
 
-async function getLinkedInCookie(): Promise<string> {
-  // First try SocialAccount table
-  const account = await db.socialAccount.findUnique({
-    where: { platform: "linkedin" },
-  });
+async function getLinkedInCookie(accountId?: string): Promise<string> {
+  let account;
+  if (accountId) {
+    account = await db.socialAccount.findUnique({ where: { id: accountId } });
+  } else {
+    account = await db.socialAccount.findFirst({
+      where: { platform: "linkedin", isDefault: true, status: "active" },
+    }) || await db.socialAccount.findFirst({
+      where: { platform: "linkedin", status: "active" },
+    });
+  }
 
   if (account && account.status === "active") {
     const cookies = JSON.parse(account.cookies) as Record<string, string>;
-    // OAuth tokens are stored as { access_token: ... }
-    // li_at cookies are stored as { li_at: ... }
     if (cookies.li_at) return cookies.li_at;
   }
 
@@ -78,12 +82,8 @@ export async function searchLinkedInPosts(
   if (!res.ok) {
     if (res.status === 401 || res.status === 403) {
       // Mark cookie as expired
-      await db.socialAccount
-        .update({
-          where: { platform: "linkedin" },
-          data: { status: "expired" },
-        })
-        .catch(() => {});
+      const acct = await db.socialAccount.findFirst({ where: { platform: "linkedin", isDefault: true } });
+      if (acct) await db.socialAccount.update({ where: { id: acct.id }, data: { status: "expired" } }).catch(() => {});
       throw new Error("LinkedIn session expired. Please update your li_at cookie in Settings.");
     }
     throw new Error(`LinkedIn search failed: ${res.status}`);

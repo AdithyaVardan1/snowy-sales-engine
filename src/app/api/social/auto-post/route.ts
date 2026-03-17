@@ -132,10 +132,16 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // 4. Generate and post for each article × platform
+  // 4. Get all active accounts per platform for fan-out
+  const allAccounts = await db.socialAccount.findMany({
+    where: { status: "active", platform: { in: platforms } },
+  });
+
+  // 5. Generate and post for each article × platform × account
   const results: Array<{
     article: string;
     platform: string;
+    accountLabel?: string;
     success: boolean;
     error?: string;
   }> = [];
@@ -148,6 +154,18 @@ export async function POST(request: NextRequest) {
     for (const platform of platforms) {
       if (successfulPlatforms.has(platform)) {
         console.log(`[AutoPost] Skipping ${platform} logic for: ${article.title} (already posted)`);
+        continue;
+      }
+
+      // Get accounts for this platform (fan-out to all active accounts)
+      const platformAccounts = allAccounts.filter((a) => a.platform === platform);
+      if (platformAccounts.length === 0) {
+        results.push({
+          article: article.title,
+          platform,
+          success: false,
+          error: `${platform} account not connected. Add your cookies in Social settings.`,
+        });
         continue;
       }
 
@@ -164,72 +182,72 @@ export async function POST(request: NextRequest) {
           if (parts.length > 1) threadParts = parts;
         }
 
-        // Create SocialPost record for audit trail
-        const socialPost = await db.socialPost.create({
-          data: {
-            platform,
-            content: threadParts ? threadParts[0] : content,
-            threadParts: threadParts ? JSON.stringify(threadParts) : null,
-            status: "scheduled",
-          },
-        });
+        // Post to each account for this platform
+        for (const account of platformAccounts) {
+          try {
+            const socialPost = await db.socialPost.create({
+              data: {
+                platform,
+                content: threadParts ? threadParts[0] : content,
+                threadParts: threadParts ? JSON.stringify(threadParts) : null,
+                status: "scheduled",
+                socialAccountId: account.id,
+              },
+            });
 
-        // Publish
-        let externalId = "";
-        if (platform === "twitter") {
-          if (threadParts && threadParts.length > 1) {
-            const result = await postThread(threadParts);
-            externalId = result.ids[0] || "";
-          } else {
-            const text = threadParts?.[0] || content;
-            const result = await postTweet(text);
-            externalId = result.id;
-          }
-        } else if (platform === "linkedin") {
-          const result = await postLinkedInUpdate(content);
-          externalId = result.id || "";
-        }
+            let externalId = "";
+            if (platform === "twitter") {
+              if (threadParts && threadParts.length > 1) {
+                const result = await postThread(threadParts, account.id);
+                externalId = result.ids[0] || "";
+              } else {
+                const text = threadParts?.[0] || content;
+                const result = await postTweet(text, undefined, account.id);
+                externalId = result.id;
+              }
+            } else if (platform === "linkedin") {
+              const result = await postLinkedInUpdate(content, account.id);
+              externalId = result.id || "";
+            }
 
-        // Mark as posted
-        await db.socialPost.update({
-          where: { id: socialPost.id },
-          data: {
-            status: "posted",
-            postedAt: new Date(),
-            externalId,
-            error: null,
-          },
-        });
+            await db.socialPost.update({
+              where: { id: socialPost.id },
+              data: { status: "posted", postedAt: new Date(), externalId, error: null },
+            });
 
-        // Log activity
-        await db.activityLog.create({
-          data: {
-            type: "content_published",
-            channel: "social_media",
-            details: JSON.stringify({
-              socialPostId: socialPost.id,
+            await db.activityLog.create({
+              data: {
+                type: "content_published",
+                channel: "social_media",
+                details: JSON.stringify({
+                  socialPostId: socialPost.id,
+                  platform,
+                  externalId,
+                  socialAccountId: account.id,
+                  accountLabel: account.label,
+                  source: "auto_post_tech",
+                  articleTitle: article.title,
+                  articleUrl: article.url,
+                }),
+              },
+            });
+
+            results.push({ article: article.title, platform, accountLabel: account.label, success: true });
+          } catch (err: any) {
+            results.push({
+              article: article.title,
               platform,
-              externalId,
-              source: "auto_post_tech",
-              articleTitle: article.title,
-              articleUrl: article.url,
-            }),
-          },
-        });
-
-        results.push({ article: article.title, platform, success: true });
+              accountLabel: account.label,
+              success: false,
+              error: err?.message || String(err),
+            });
+            console.error(`[AutoPost] Failed ${platform}/${account.label} for "${article.title}":`, err?.message);
+          }
+        }
       } catch (err: any) {
         const errMsg = err?.message || String(err);
-        results.push({
-          article: article.title,
-          platform,
-          success: false,
-          error: errMsg,
-        });
-        console.error(
-          `[AutoPost] Failed ${platform} for "${article.title}":`,
-          errMsg
-        );
+        results.push({ article: article.title, platform, success: false, error: errMsg });
+        console.error(`[AutoPost] Failed ${platform} for "${article.title}":`, errMsg);
       }
     }
   }
