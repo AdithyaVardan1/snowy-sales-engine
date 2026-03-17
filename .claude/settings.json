@@ -2,7 +2,12 @@
   "permissions": {
     "allow": [
       "Bash(npx tsc:*)",
-      "Bash(npx prisma:*)"
+      "Bash(npx prisma:*)",
+      "Bash(DATABASE_URL=\"file:./dev.db\" npx prisma migrate dev --name init --create-only)",
+      "Bash(DATABASE_URL=\"file:./dev.db\" npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script)"
+    ],
+    "additionalDirectories": [
+      "/Users/av/Sales_engine/prisma/migrations"
     ]
   }
 }
