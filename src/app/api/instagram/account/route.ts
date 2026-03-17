@@ -33,7 +33,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { username, password, verificationCode, partialSessionJson } = await request.json();
+    const { username, password, verificationCode, challengeContext } = await request.json();
 
     if (!username || !password) {
       return NextResponse.json(
@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await loginInstagram(username, password, verificationCode, partialSessionJson);
+    const result = await loginInstagram(username, password, verificationCode, challengeContext);
 
     return NextResponse.json({
       connected: true,
@@ -51,11 +51,15 @@ export async function POST(request: NextRequest) {
     });
   } catch (error: any) {
     const msg = error.message || "Login failed";
-    const partialSession = error.partialSessionJson || undefined;
     // Return 2FA/challenge flag so frontend can show verification options
     if (/two_factor/i.test(msg) || /challenge/i.test(msg)) {
       return NextResponse.json(
-        { error: msg, needs2FA: true, partialSessionJson: partialSession },
+        {
+          error: msg,
+          needs2FA: true,
+          challengeContext: error.challengeContext,
+          stepName: error.stepName,
+        },
         { status: 403 }
       );
     }

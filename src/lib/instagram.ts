@@ -18,7 +18,7 @@ interface BridgePayload {
   username?: string;
   password?: string;
   verification_code?: string;
-  partial_session_json?: string;
+  challenge_context?: string;
   session_json?: string;
   user_id?: string;
   text?: string;
@@ -81,7 +81,8 @@ interface BridgeResult {
   users?: IGUserInfo[];
   error?: string;
   code?: string;
-  partial_session_json?: string;
+  challenge_context?: string;
+  step_name?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -192,21 +193,21 @@ export async function loginInstagram(
   username: string,
   password: string,
   verificationCode?: string,
-  partialSessionJson?: string
+  challengeContext?: string
 ): Promise<{ sessionJson: string; username: string; userId: string }> {
   const result = await runBridge({
     action: "login",
     username,
     password,
     ...(verificationCode && { verification_code: verificationCode }),
-    ...(partialSessionJson && { partial_session_json: partialSessionJson }),
+    ...(challengeContext && { challenge_context: challengeContext }),
   });
 
   if (!result.success) {
-    // Attach partial session to error so caller can pass it back on retry
     const err: any = new Error(result.error || "Instagram login failed");
     err.code = result.code;
-    err.partialSessionJson = result.partial_session_json;
+    err.challengeContext = result.challenge_context;
+    err.stepName = result.step_name;
     throw err;
   }
 

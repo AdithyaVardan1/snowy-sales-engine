@@ -39,29 +39,85 @@ def handle_login(payload: dict) -> dict:
     username = payload.get("username", "")
     password = payload.get("password", "")
     verification_code = payload.get("verification_code", "")
-    partial_session = payload.get("partial_session_json", "")
+    challenge_context = payload.get("challenge_context", "")
     if not username or not password:
         return {"success": False, "error": "username and password required"}
 
     cl = Client()
 
-    # Restore partial session from a previous challenge attempt
-    if partial_session:
+    # If we have a saved challenge context, restore client state and resolve the challenge
+    if challenge_context:
         try:
-            cl.set_settings(json.loads(partial_session))
-        except Exception:
-            pass  # Fall through to fresh login
+            ctx = json.loads(challenge_context)
+            cl.set_settings(ctx["settings"])
+            cl.last_json = ctx.get("last_json", {})
+
+            challenge_url = ctx.get("challenge_url", "")
+            step_name = ctx.get("step_name", "")
+
+            if step_name == "delta_login_review":
+                # "It Was Me" — user approved in app, we just confirm
+                cl._send_private_request(challenge_url, {"choice": "0"})
+                cl.authorization_data = cl.parse_authorization(
+                    cl.last_response.headers.get("ig-set-authorization")
+                )
+                cl.login_flow()
+                session_json = json.dumps(cl.get_settings())
+                return {
+                    "success": True,
+                    "session_json": session_json,
+                    "username": username,
+                    "user_id": str(cl.user_id),
+                }
+            else:
+                # Unknown step, fall through to normal login
+                pass
+        except Exception as e:
+            # Challenge resolve failed, fall through to fresh login
+            sys.stderr.write(f"Challenge resolve failed: {e}\n")
+            cl = Client()
 
     try:
         cl.login(username, password, verification_code=verification_code if verification_code else "")
     except TwoFactorRequired:
-        # Save partial session so we can resume after 2FA code or app approval
-        partial = json.dumps(cl.get_settings())
-        return {"success": False, "error": "two_factor_required", "code": "2FA", "partial_session_json": partial}
+        # 2FA code flow — instagrapi handles this natively on next call with code
+        # No special state needed: cl.login() re-does accounts/login/ and catches
+        # TwoFactorRequired internally when verification_code is provided
+        return {"success": False, "error": "two_factor_required", "code": "2FA"}
     except ChallengeRequired:
-        # Save partial session — user needs to approve in Instagram app, then retry
-        partial = json.dumps(cl.get_settings())
-        return {"success": False, "error": "challenge_required", "code": "CHALLENGE", "partial_session_json": partial}
+        # Challenge flow — save client state + challenge URL for retry
+        try:
+            last_json = cl.last_json or {}
+            challenge_info = last_json.get("challenge", {})
+            challenge_url = challenge_info.get("api_path", "")
+
+            # Do the initial GET to the challenge URL to get step info
+            if challenge_url:
+                try:
+                    cl._send_private_request(challenge_url[1:], params={
+                        "guid": cl.uuid,
+                        "device_id": cl.android_device_id,
+                    })
+                except ChallengeRequired:
+                    pass  # Expected, continue
+
+                step_name = cl.last_json.get("step_name", "")
+                ctx = {
+                    "settings": cl.get_settings(),
+                    "last_json": cl.last_json,
+                    "challenge_url": challenge_url,
+                    "step_name": step_name,
+                }
+                return {
+                    "success": False,
+                    "error": "challenge_required",
+                    "code": "CHALLENGE",
+                    "challenge_context": json.dumps(ctx),
+                    "step_name": step_name,
+                }
+        except Exception as e:
+            sys.stderr.write(f"Challenge context save failed: {e}\n")
+        return {"success": False, "error": "challenge_required", "code": "CHALLENGE"}
     except PleaseWaitFewMinutes:
         return {"success": False, "error": "Rate limited — please wait a few minutes and try again"}
     except Exception as e:

@@ -133,6 +133,8 @@ export default function InstagramPage() {
   const [loginError, setLoginError] = useState("");
   const [needs2FA, setNeeds2FA] = useState(false);
   const [verificationCode, setVerificationCode] = useState("");
+  const [challengeContext, setChallengeContext] = useState("");
+  const [challengeStepName, setChallengeStepName] = useState("");
 
   // Followers state
   const [followers, setFollowers] = useState<Follower[]>([]);
@@ -291,6 +293,7 @@ export default function InstagramPage() {
           username: loginUsername,
           password: loginPassword,
           ...(verificationCode && { verificationCode }),
+          ...(challengeContext && { challengeContext }),
         }),
       });
       const data = await res.json();
@@ -298,6 +301,11 @@ export default function InstagramPage() {
         if (data.needs2FA) {
           setNeeds2FA(true);
           setLoginError("");
+          // Save challenge context so retry can resolve the same challenge
+          if (data.challengeContext) {
+            setChallengeContext(data.challengeContext);
+            setChallengeStepName(data.stepName || "");
+          }
           return;
         }
         setLoginError(data.error || "Login failed");
@@ -309,6 +317,8 @@ export default function InstagramPage() {
       setLoginUsername("");
       setLoginPassword("");
       setVerificationCode("");
+      setChallengeContext("");
+      setChallengeStepName("");
       setNeeds2FA(false);
     } catch (e: any) {
       setLoginError(e.message || "Login failed");
@@ -1747,41 +1757,59 @@ export default function InstagramPage() {
               {needs2FA && (
                 <div className="space-y-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                   <p className="text-sm font-medium text-amber-800">Instagram requires verification</p>
-                  <p className="text-xs text-amber-700">Choose one option below depending on what Instagram showed you:</p>
 
-                  {/* Option 1: Code entry */}
-                  <div className="space-y-1">
-                    <p className="text-xs font-medium text-gray-700">Option 1: Enter 2FA code (SMS or authenticator app)</p>
-                    <input
-                      type="text"
-                      value={verificationCode}
-                      onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                      placeholder="6-digit code"
-                      className="w-full border border-amber-300 bg-white rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 text-center tracking-widest font-mono text-lg"
-                      maxLength={6}
-                      autoFocus
-                      onKeyDown={(e) => e.key === "Enter" && verificationCode.length === 6 && handleLogin()}
-                    />
-                  </div>
+                  {challengeStepName === "delta_login_review" ? (
+                    <>
+                      {/* Challenge: app approval only */}
+                      <p className="text-xs text-amber-700">Instagram sent a login approval request. Approve it in the Instagram app, then click the button below.</p>
+                      <button
+                        onClick={() => { setVerificationCode(""); handleLogin(); }}
+                        disabled={loginLoading}
+                        className="w-full px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        <RefreshCw className={`w-4 h-4 ${loginLoading ? "animate-spin" : ""}`} />
+                        {loginLoading ? "Confirming approval..." : "I approved it — Continue Login"}
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-xs text-amber-700">Choose one option below depending on what Instagram showed you:</p>
 
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 h-px bg-amber-300" />
-                    <span className="text-xs text-amber-500 font-medium">OR</span>
-                    <div className="flex-1 h-px bg-amber-300" />
-                  </div>
+                      {/* Option 1: Code entry */}
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium text-gray-700">Option 1: Enter 2FA code (SMS or authenticator app)</p>
+                        <input
+                          type="text"
+                          value={verificationCode}
+                          onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                          placeholder="6-digit code"
+                          className="w-full border border-amber-300 bg-white rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 text-center tracking-widest font-mono text-lg"
+                          maxLength={6}
+                          autoFocus
+                          onKeyDown={(e) => e.key === "Enter" && verificationCode.length === 6 && handleLogin()}
+                        />
+                      </div>
 
-                  {/* Option 2: App approval retry */}
-                  <div className="space-y-1">
-                    <p className="text-xs font-medium text-gray-700">Option 2: Approve login in the Instagram app, then click retry</p>
-                    <button
-                      onClick={() => { setVerificationCode(""); handleLogin(); }}
-                      disabled={loginLoading}
-                      className="w-full px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
-                    >
-                      <RefreshCw className={`w-4 h-4 ${loginLoading ? "animate-spin" : ""}`} />
-                      {loginLoading ? "Retrying..." : "I approved it — Retry Login"}
-                    </button>
-                  </div>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-px bg-amber-300" />
+                        <span className="text-xs text-amber-500 font-medium">OR</span>
+                        <div className="flex-1 h-px bg-amber-300" />
+                      </div>
+
+                      {/* Option 2: App approval retry */}
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium text-gray-700">Option 2: Approve login in the Instagram app, then click retry</p>
+                        <button
+                          onClick={() => { setVerificationCode(""); handleLogin(); }}
+                          disabled={loginLoading}
+                          className="w-full px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                        >
+                          <RefreshCw className={`w-4 h-4 ${loginLoading ? "animate-spin" : ""}`} />
+                          {loginLoading ? "Retrying..." : "I approved it — Retry Login"}
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
               {!needs2FA && (
