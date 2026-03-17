@@ -152,6 +152,64 @@ async def run(payload: dict) -> dict:
             dm_id = str(result.id) if hasattr(result, "id") else str(result)
             return {"success": True, "dm_id": dm_id, "text": text}
 
+        # ── Get DM Inbox ─────────────────────────────────────────────────────
+        elif action == "get_dms":
+            try:
+                inbox = await client.get_dm_history()
+                conversations = []
+
+                for conv in inbox:
+                    messages = []
+                    for msg in conv.messages[:10]:
+                        sender_id = str(msg.sender_id) if hasattr(msg, "sender_id") else ""
+                        messages.append({
+                            "id": str(msg.id) if hasattr(msg, "id") else "",
+                            "text": msg.text if hasattr(msg, "text") else str(msg),
+                            "sender_id": sender_id,
+                            "created_at": str(msg.time) if hasattr(msg, "time") else "",
+                        })
+
+                    participants = []
+                    if hasattr(conv, "participants"):
+                        for p in conv.participants:
+                            participants.append({
+                                "id": str(p.id) if hasattr(p, "id") else "",
+                                "username": p.screen_name if hasattr(p, "screen_name") else "",
+                                "name": p.name if hasattr(p, "name") else "",
+                            })
+
+                    conversations.append({
+                        "id": str(conv.id) if hasattr(conv, "id") else "",
+                        "participants": participants,
+                        "messages": messages,
+                    })
+
+                return {"success": True, "conversations": conversations, "count": len(conversations)}
+            except Exception as e:
+                return {"success": False, "error": f"get_dms failed: {str(e)}"}
+
+        # ── Get User Info ────────────────────────────────────────────────────
+        elif action == "get_user":
+            if not target_username:
+                return {"success": False, "error": "target_username is required"}
+
+            user = await client.get_user_by_screen_name(target_username)
+            if not user:
+                return {"success": False, "error": f"User @{target_username} not found"}
+
+            return {
+                "success": True,
+                "user": {
+                    "id": str(user.id),
+                    "username": user.screen_name,
+                    "name": user.name,
+                    "bio": getattr(user, "description", ""),
+                    "followers": getattr(user, "followers_count", 0),
+                    "following": getattr(user, "following_count", 0),
+                    "profile_url": f"https://x.com/{user.screen_name}",
+                },
+            }
+
         else:
             return {"success": False, "error": f"Unknown action: {action}"}
 

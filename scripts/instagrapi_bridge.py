@@ -38,16 +38,30 @@ def build_client_from_session(session_json: str) -> Client:
 def handle_login(payload: dict) -> dict:
     username = payload.get("username", "")
     password = payload.get("password", "")
+    verification_code = payload.get("verification_code", "")
+    partial_session = payload.get("partial_session_json", "")
     if not username or not password:
         return {"success": False, "error": "username and password required"}
 
     cl = Client()
+
+    # Restore partial session from a previous challenge attempt
+    if partial_session:
+        try:
+            cl.set_settings(json.loads(partial_session))
+        except Exception:
+            pass  # Fall through to fresh login
+
     try:
-        cl.login(username, password)
+        cl.login(username, password, verification_code=verification_code if verification_code else "")
     except TwoFactorRequired:
-        return {"success": False, "error": "two_factor_required", "code": "2FA"}
+        # Save partial session so we can resume after 2FA code or app approval
+        partial = json.dumps(cl.get_settings())
+        return {"success": False, "error": "two_factor_required", "code": "2FA", "partial_session_json": partial}
     except ChallengeRequired:
-        return {"success": False, "error": "challenge_required", "code": "CHALLENGE"}
+        # Save partial session — user needs to approve in Instagram app, then retry
+        partial = json.dumps(cl.get_settings())
+        return {"success": False, "error": "challenge_required", "code": "CHALLENGE", "partial_session_json": partial}
     except PleaseWaitFewMinutes:
         return {"success": False, "error": "Rate limited — please wait a few minutes and try again"}
     except Exception as e:
@@ -166,12 +180,124 @@ def handle_get_user_info(payload: dict) -> dict:
         return {"success": False, "error": str(e)}
 
 
+def handle_get_user_by_username(payload: dict) -> dict:
+    """Get public info for any user by their username."""
+    session_str = payload.get("session_json", "")
+    username = payload.get("username", "")
+    if not session_str or not username:
+        return {"success": False, "error": "session_json and username required"}
+
+    try:
+        cl = build_client_from_session(session_str)
+        info = cl.user_info_by_username(username)
+        return {
+            "success": True,
+            "user_id": str(info.pk),
+            "username": info.username,
+            "full_name": info.full_name or "",
+            "biography": info.biography or "",
+            "follower_count": info.follower_count,
+            "following_count": info.following_count,
+            "media_count": info.media_count,
+            "is_private": info.is_private,
+            "is_business": info.is_business_account if hasattr(info, "is_business_account") else False,
+            "profile_pic_url": str(info.profile_pic_url) if info.profile_pic_url else "",
+        }
+    except LoginRequired:
+        return {"success": False, "error": "Session expired — please re-login"}
+    except PleaseWaitFewMinutes:
+        return {"success": False, "error": "Rate limited — please wait a few minutes"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def handle_get_dm_inbox(payload: dict) -> dict:
+    """Fetch recent DM threads from the inbox."""
+    session_str = payload.get("session_json", "")
+    amount = payload.get("amount", 20)
+    if not session_str:
+        return {"success": False, "error": "session_json required"}
+
+    try:
+        cl = build_client_from_session(session_str)
+        threads = cl.direct_threads(amount=int(amount))
+
+        conversations = []
+        for thread in threads:
+            participants = []
+            for user in thread.users:
+                participants.append({
+                    "user_id": str(user.pk),
+                    "username": user.username,
+                    "full_name": user.full_name or "",
+                })
+
+            messages = []
+            for msg in (thread.messages or []):
+                messages.append({
+                    "id": str(msg.id) if msg.id else "",
+                    "sender_id": str(msg.user_id) if msg.user_id else "",
+                    "text": msg.text or "",
+                    "timestamp": msg.timestamp.isoformat() if hasattr(msg, "timestamp") and msg.timestamp else "",
+                })
+
+            conversations.append({
+                "thread_id": str(thread.id) if thread.id else "",
+                "participants": participants,
+                "messages": messages,
+            })
+
+        return {"success": True, "conversations": conversations}
+    except LoginRequired:
+        return {"success": False, "error": "Session expired — please re-login"}
+    except PleaseWaitFewMinutes:
+        return {"success": False, "error": "Rate limited — please wait a few minutes"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def handle_search_users(payload: dict) -> dict:
+    """Search Instagram users by query string."""
+    session_str = payload.get("session_json", "")
+    query = payload.get("query", "")
+    amount = payload.get("amount", 10)
+    if not session_str or not query:
+        return {"success": False, "error": "session_json and query required"}
+
+    try:
+        cl = build_client_from_session(session_str)
+        users = cl.search_users(query, int(amount))
+
+        results = []
+        for user in users:
+            results.append({
+                "user_id": str(user.pk),
+                "username": user.username,
+                "full_name": user.full_name or "",
+                "biography": user.biography if hasattr(user, "biography") else "",
+                "follower_count": user.follower_count if hasattr(user, "follower_count") else 0,
+                "is_private": user.is_private if hasattr(user, "is_private") else False,
+                "profile_pic_url": str(user.profile_pic_url) if user.profile_pic_url else "",
+            })
+
+        return {"success": True, "users": results}
+    except LoginRequired:
+        return {"success": False, "error": "Session expired — please re-login"}
+    except PleaseWaitFewMinutes:
+        return {"success": False, "error": "Rate limited — please wait a few minutes"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 HANDLERS = {
     "login": handle_login,
     "check_session": handle_check_session,
     "get_followers": handle_get_followers,
     "send_dm": handle_send_dm,
     "get_user_info": handle_get_user_info,
+    "get_user_by_username": handle_get_user_by_username,
+    "get_dm_inbox": handle_get_dm_inbox,
+    "search_users": handle_search_users,
 }
 
 
