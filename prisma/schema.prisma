@@ -102,27 +102,34 @@ model BlogPost {
 }
 
 model SocialAccount {
-  id        String   @id @default(cuid())
-  platform  String   @unique // "twitter" | "linkedin"
+  id        String       @id @default(cuid())
+  platform  String       // "twitter" | "linkedin" | "instagram"
+  label     String       @default("default") // user-friendly name, e.g. "Personal", "Company"
   cookies   String
   username  String?
-  status    String   @default("active") // "active" | "expired"
-  updatedAt DateTime @updatedAt
-  createdAt DateTime @default(now())
+  status    String       @default("active") // "active" | "expired"
+  isDefault Boolean      @default(false)
+  updatedAt DateTime     @updatedAt
+  createdAt DateTime     @default(now())
+  posts     SocialPost[]
+
+  @@unique([platform, label])
 }
 
 model SocialPost {
-  id           String    @id @default(cuid())
-  platform     String    // "twitter" | "linkedin"
-  content      String
-  threadParts  String?   // JSON array for Twitter threads
-  status       String    @default("draft") // "draft" | "scheduled" | "posted" | "failed"
-  scheduledFor DateTime?
-  postedAt     DateTime?
-  externalId   String?
-  error        String?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id              String         @id @default(cuid())
+  platform        String         // "twitter" | "linkedin"
+  content         String
+  threadParts     String?        // JSON array for Twitter threads
+  status          String         @default("draft") // "draft" | "scheduled" | "posted" | "failed"
+  scheduledFor    DateTime?
+  postedAt        DateTime?
+  externalId      String?
+  error           String?
+  socialAccountId String?
+  socialAccount   SocialAccount? @relation(fields: [socialAccountId], references: [id], onDelete: SetNull)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
 }
 
 model CronJob {
@@ -253,6 +260,71 @@ model InstagramOAuthToken {
   isActive           Boolean   @default(true)
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
+}
+
+// ── Autonomous Sales Pipeline ────────────────────────────────────────────────
+
+model KnowledgeEntry {
+  id        String   @id @default(cuid())
+  category  String   // "product" | "pricing" | "faq" | "objection" | "competitor" | "usecase"
+  title     String
+  content   String   // the actual knowledge text
+  priority  Int      @default(0) // higher = more important, included first in AI context
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SalesProspect {
+  id              String         @id @default(cuid())
+  platform        String         @default("twitter") // "twitter" | "linkedin"
+  username        String
+  displayName     String?
+  profileUrl      String?
+  bio             String?
+  followers       Int            @default(0)
+  source          String         @default("manual") // "manual" | "search" | "engagement" | "follower"
+  sourceDetails   String?        // JSON: search query, tweet ID, etc.
+  status          String         @default("new") // "new" | "queued" | "contacted" | "in_conversation" | "converted" | "lost" | "blocked"
+  score           Int            @default(0) // lead score 0-100
+  tags            String?        // comma-separated tags
+  socialAccountId String?        // which of our accounts to use
+  lastContactedAt DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  sessions        SalesSession[]
+
+  @@unique([platform, username])
+}
+
+model SalesSession {
+  id           String         @id @default(cuid())
+  prospectId   String
+  prospect     SalesProspect  @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  stage        String         @default("cold_outreach") // "cold_outreach" | "engaged" | "interested" | "objection_handling" | "closing" | "converted" | "lost"
+  summary      String?        // AI-generated conversation summary
+  sentiment    String?        // "positive" | "neutral" | "negative" | "unknown"
+  nextAction   String?        // AI-suggested next step
+  isActive     Boolean        @default(true)
+  isPaused     Boolean        @default(false) // manual pause by user
+  lastMessageAt DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  messages     SalesMessage[]
+}
+
+model SalesMessage {
+  id         String       @id @default(cuid())
+  sessionId  String
+  session    SalesSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role       String       // "outbound" (us) | "inbound" (prospect) | "system" (internal notes)
+  content    String
+  externalId String?      // DM message ID from platform
+  status     String       @default("sent") // "draft" | "pending" | "sent" | "delivered" | "failed"
+  error      String?
+  metadata   String?      // JSON: extra data
+  sentAt     DateTime?
+  createdAt  DateTime     @default(now())
 }
 
 // ── SEO Tracker ─────────────────────────────────────────────────────────────
