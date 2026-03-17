@@ -12,15 +12,18 @@ import {
   Twitter,
   Linkedin,
   Trash2,
-  MessageSquare,
+  Plus,
+  Star,
 } from "lucide-react";
 import SetupBanner from "@/components/SetupBanner";
 
 interface SocialAccount {
   id: string;
   platform: string;
+  label: string;
   username?: string;
   status: string;
+  isDefault: boolean;
   updatedAt: string;
 }
 
@@ -34,6 +37,7 @@ interface SocialPost {
   postedAt?: string;
   externalId?: string;
   error?: string;
+  socialAccountId?: string;
   createdAt: string;
 }
 
@@ -44,7 +48,6 @@ const STATUS_ICONS: Record<string, React.ReactNode> = {
   failed: <AlertCircle className="w-3.5 h-3.5 text-red-500" />,
 };
 
-// Reddit alien icon (simple SVG since lucide doesn't have one)
 function RedditIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="currentColor">
@@ -68,17 +71,16 @@ export default function SocialPage() {
   const [topic, setTopic] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [showTopicInput, setShowTopicInput] = useState(false);
+  // Multi-account: which accounts are selected for posting
+  const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(new Set());
 
-  // Auto-split long text into ≤280 char chunks at paragraph/sentence breaks
   function autoSplitToThread(text: string): string {
-    const MAX = 275; // leave a little room
+    const MAX = 275;
     const paragraphs = text.split(/\n+/).map((p) => p.trim()).filter(Boolean);
     const chunks: string[] = [];
     let current = "";
-
     for (const para of paragraphs) {
       if (para.length > MAX) {
-        // Para itself is too long — split by sentences
         const sentences = para.match(/[^.!?]+[.!?]+[\s]?|[^.!?]+$/g) || [para];
         for (const sentence of sentences) {
           const s = sentence.trim();
@@ -109,6 +111,12 @@ export default function SocialPage() {
     loadAll();
   }, []);
 
+  // Auto-select accounts when accounts load or platform changes
+  useEffect(() => {
+    const platformAccounts = accounts.filter((a) => a.platform === platform && a.status === "active");
+    setSelectedAccountIds(new Set(platformAccounts.map((a) => a.id)));
+  }, [platform, accounts]);
+
   async function loadAll() {
     setLoading(true);
     try {
@@ -124,8 +132,18 @@ export default function SocialPage() {
     setLoading(false);
   }
 
-  function getAccount(p: string) {
-    return accounts.find((a) => a.platform === p);
+  const platformAccounts = accounts.filter((a) => a.platform === platform);
+  const activePlatformAccounts = platformAccounts.filter((a) => a.status === "active");
+  const twitterAccounts = accounts.filter((a) => a.platform === "twitter");
+  const linkedinAccounts = accounts.filter((a) => a.platform === "linkedin");
+
+  function toggleAccount(id: string) {
+    setSelectedAccountIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
 
   async function handleGenerate() {
@@ -186,37 +204,61 @@ export default function SocialPage() {
       return;
     }
 
+    // Multi-account posting: create a post + publish for each selected account
+    const targetIds = Array.from(selectedAccountIds).filter((id) =>
+      activePlatformAccounts.some((a) => a.id === id)
+    );
+
+    if (targetIds.length === 0) {
+      alert("No accounts selected. Select at least one account to post to.");
+      return;
+    }
+
     setPublishing(true);
     let threadParts: string[] | undefined;
     if (platform === "twitter" && isThread) {
       threadParts = content.split("---").map((t) => t.trim()).filter((t) => t.length > 0);
     }
 
-    const createRes = await fetch("/api/social/posts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        platform,
-        content: threadParts ? threadParts[0] : content,
-        threadParts,
-        status: "draft",
-      }),
-    });
+    const errors: string[] = [];
 
-    if (createRes.ok) {
-      const post = await createRes.json();
-      const pubRes = await fetch("/api/social/publish", {
+    for (const accountId of targetIds) {
+      const createRes = await fetch("/api/social/posts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId: post.id }),
+        body: JSON.stringify({
+          platform,
+          content: threadParts ? threadParts[0] : content,
+          threadParts,
+          status: "draft",
+          socialAccountId: accountId,
+        }),
       });
-      if (pubRes.ok) {
-        setContent("");
-        setIsThread(false);
-      } else {
-        const err = await pubRes.json();
-        alert(`Publishing failed: ${err.error}`);
+
+      if (createRes.ok) {
+        const post = await createRes.json();
+        const pubRes = await fetch("/api/social/publish", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ postId: post.id }),
+        });
+        if (!pubRes.ok) {
+          const err = await pubRes.json();
+          const acct = activePlatformAccounts.find((a) => a.id === accountId);
+          errors.push(`${acct?.label || accountId}: ${err.error}`);
+        }
       }
+    }
+
+    if (errors.length === 0) {
+      setContent("");
+      setIsThread(false);
+    } else if (errors.length < targetIds.length) {
+      setContent("");
+      setIsThread(false);
+      alert(`Posted to some accounts. Errors:\n${errors.join("\n")}`);
+    } else {
+      alert(`Publishing failed:\n${errors.join("\n")}`);
     }
 
     setPublishing(false);
@@ -229,17 +271,25 @@ export default function SocialPage() {
     if (platform === "twitter" && isThread) {
       threadParts = content.split("---").map((t) => t.trim()).filter((t) => t.length > 0);
     }
-    await fetch("/api/social/posts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        platform,
-        content: threadParts ? threadParts[0] : content,
-        threadParts,
-        status: "scheduled",
-        scheduledFor,
-      }),
-    });
+
+    const targetIds = Array.from(selectedAccountIds).filter((id) =>
+      activePlatformAccounts.some((a) => a.id === id)
+    );
+
+    for (const accountId of targetIds) {
+      await fetch("/api/social/posts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          platform,
+          content: threadParts ? threadParts[0] : content,
+          threadParts,
+          status: "scheduled",
+          scheduledFor,
+          socialAccountId: accountId,
+        }),
+      });
+    }
     setContent("");
     setIsThread(false);
     setScheduledFor("");
@@ -251,8 +301,6 @@ export default function SocialPage() {
     await loadAll();
   }
 
-  const twitterAccount = getAccount("twitter");
-  const linkedinAccount = getAccount("linkedin");
   const charLimit = platform === "twitter" ? 25_000 : platform === "linkedin" ? 3000 : 40000;
   const currentContent = isThread
     ? content.split("---").map((t) => t.trim()).filter(Boolean)
@@ -301,11 +349,10 @@ export default function SocialPage() {
           >
             <Twitter className="w-4 h-4" />
             Twitter/X
-            {twitterAccount && (
-              <span
-                className={`w-2 h-2 rounded-full ${twitterAccount.status === "active" ? "bg-emerald-400" : "bg-red-400"
-                  }`}
-              />
+            {twitterAccounts.length > 0 && (
+              <span className="bg-white/20 text-[10px] px-1.5 py-0.5 rounded-full">
+                {twitterAccounts.filter((a) => a.status === "active").length}
+              </span>
             )}
           </button>
           <button
@@ -317,11 +364,10 @@ export default function SocialPage() {
           >
             <Linkedin className="w-4 h-4" />
             LinkedIn
-            {linkedinAccount && (
-              <span
-                className={`w-2 h-2 rounded-full ${linkedinAccount.status === "active" ? "bg-emerald-400" : "bg-red-400"
-                  }`}
-              />
+            {linkedinAccounts.length > 0 && (
+              <span className="bg-white/20 text-[10px] px-1.5 py-0.5 rounded-full">
+                {linkedinAccounts.filter((a) => a.status === "active").length}
+              </span>
             )}
           </button>
           <button
@@ -343,13 +389,40 @@ export default function SocialPage() {
           </button>
         </div>
 
+        {/* Multi-account selector */}
+        {platform !== "reddit" && activePlatformAccounts.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <span className="text-xs text-gray-500">Post to:</span>
+            {activePlatformAccounts.map((acct) => (
+              <button
+                key={acct.id}
+                onClick={() => toggleAccount(acct.id)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg border transition-colors ${
+                  selectedAccountIds.has(acct.id)
+                    ? "bg-blue-50 border-blue-300 text-blue-700"
+                    : "bg-white border-gray-200 text-gray-500 hover:bg-gray-50"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedAccountIds.has(acct.id)}
+                  onChange={() => toggleAccount(acct.id)}
+                  className="w-3 h-3 rounded"
+                />
+                {acct.isDefault && <Star className="w-3 h-3 text-yellow-500" />}
+                @{acct.username || acct.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Account status banners */}
-        {platform === "twitter" && !twitterAccount && (
+        {platform === "twitter" && twitterAccounts.length === 0 && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4 text-sm text-yellow-700">
             Twitter not connected. Click the settings icon to add your cookies.
           </div>
         )}
-        {platform === "linkedin" && !linkedinAccount && (
+        {platform === "linkedin" && linkedinAccounts.length === 0 && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4 text-sm text-yellow-700">
             LinkedIn not connected. Click the settings icon to connect.
           </div>
@@ -376,7 +449,6 @@ export default function SocialPage() {
                     />
                     Thread mode (separate tweets with ---)
                   </label>
-                  {/* Show auto-split button when content is too long for a single tweet */}
                   {!isThread && content.length > 280 && (
                     <button
                       onClick={() => {
@@ -384,9 +456,9 @@ export default function SocialPage() {
                         setIsThread(true);
                       }}
                       className="flex items-center gap-1 px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-600 text-xs font-medium rounded-lg border border-blue-200 transition-colors"
-                      title="Automatically split content into ≤280 char tweets"
+                      title="Automatically split content into <=280 char tweets"
                     >
-                      ✂ Auto-split as thread
+                      Auto-split as thread
                     </button>
                   )}
                 </>
@@ -453,6 +525,11 @@ export default function SocialPage() {
               {isThread
                 ? `${currentContent.length} tweets`
                 : `${content.length}${platform !== "reddit" ? `/${charLimit}` : " chars"}`}
+              {platform !== "reddit" && selectedAccountIds.size > 0 && (
+                <span className="ml-2 text-blue-500">
+                  → {selectedAccountIds.size} account{selectedAccountIds.size !== 1 ? "s" : ""}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2">
               {platform !== "reddit" && (
@@ -482,7 +559,7 @@ export default function SocialPage() {
                   }`}
               >
                 <Send className="w-3.5 h-3.5" />
-                {publishing ? "Posting..." : platform === "reddit" ? "Post to Reddit" : "Post Now"}
+                {publishing ? "Posting..." : platform === "reddit" ? "Post to Reddit" : `Post Now${selectedAccountIds.size > 1 ? ` (${selectedAccountIds.size})` : ""}`}
               </button>
             </div>
           </div>
@@ -498,40 +575,48 @@ export default function SocialPage() {
           {posts.length === 0 ? (
             <p className="text-xs text-gray-400 text-center py-8">No posts yet</p>
           ) : (
-            posts.map((post) => (
-              <div key={post.id} className="bg-gray-50 rounded-lg p-3">
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-1.5">
-                    {post.platform === "twitter" ? (
-                      <Twitter className="w-3 h-3 text-blue-400" />
-                    ) : post.platform === "reddit" ? (
-                      <RedditIcon className="w-3 h-3 text-orange-500" />
-                    ) : (
-                      <Linkedin className="w-3 h-3 text-blue-700" />
-                    )}
-                    {STATUS_ICONS[post.status]}
-                    <span className="text-[10px] text-gray-500">{post.status}</span>
+            posts.map((post) => {
+              const acct = accounts.find((a) => a.id === post.socialAccountId);
+              return (
+                <div key={post.id} className="bg-gray-50 rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-1.5">
+                      {post.platform === "twitter" ? (
+                        <Twitter className="w-3 h-3 text-blue-400" />
+                      ) : post.platform === "reddit" ? (
+                        <RedditIcon className="w-3 h-3 text-orange-500" />
+                      ) : (
+                        <Linkedin className="w-3 h-3 text-blue-700" />
+                      )}
+                      {STATUS_ICONS[post.status]}
+                      <span className="text-[10px] text-gray-500">{post.status}</span>
+                      {acct && (
+                        <span className="text-[10px] text-gray-400 ml-1">
+                          @{acct.username || acct.label}
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => handleDeletePost(post.id)}
+                      className="text-gray-300 hover:text-red-500"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
                   </div>
-                  <button
-                    onClick={() => handleDeletePost(post.id)}
-                    className="text-gray-300 hover:text-red-500"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
+                  <p className="text-xs text-gray-700 line-clamp-3">{post.content}</p>
+                  {post.error && (
+                    <p className="text-[10px] text-red-500 mt-1">{post.error}</p>
+                  )}
+                  <p className="text-[10px] text-gray-400 mt-1">
+                    {post.postedAt
+                      ? `Posted ${new Date(post.postedAt).toLocaleString()}`
+                      : post.scheduledFor
+                        ? `Scheduled ${new Date(post.scheduledFor).toLocaleString()}`
+                        : new Date(post.createdAt).toLocaleString()}
+                  </p>
                 </div>
-                <p className="text-xs text-gray-700 line-clamp-3">{post.content}</p>
-                {post.error && (
-                  <p className="text-[10px] text-red-500 mt-1">{post.error}</p>
-                )}
-                <p className="text-[10px] text-gray-400 mt-1">
-                  {post.postedAt
-                    ? `Posted ${new Date(post.postedAt).toLocaleString()}`
-                    : post.scheduledFor
-                      ? `Scheduled ${new Date(post.scheduledFor).toLocaleString()}`
-                      : new Date(post.createdAt).toLocaleString()}
-                </p>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
@@ -590,14 +675,14 @@ function CookieSettingsModal({
 }) {
   const [twitterCt0, setTwitterCt0] = useState("");
   const [twitterAuth, setTwitterAuth] = useState("");
-  const [redditSession, setRedditSession] = useState("");
+  const [twitterLabel, setTwitterLabel] = useState("");
   const [saving, setSaving] = useState("");
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
   const [redditStatus, setRedditStatus] = useState<{ valid?: boolean; username?: string; error?: string } | null>(null);
 
-  const twitter = accounts.find((a) => a.platform === "twitter");
-  const linkedin = accounts.find((a) => a.platform === "linkedin");
+  const twitterAccounts = accounts.filter((a) => a.platform === "twitter");
+  const linkedinAccounts = accounts.filter((a) => a.platform === "linkedin");
 
   async function saveTwitter() {
     setSaving("twitter");
@@ -610,6 +695,7 @@ function CookieSettingsModal({
       body: JSON.stringify({
         platform: "twitter",
         cookies: { ct0: twitterCt0.trim(), auth_token: twitterAuth.trim() },
+        label: twitterLabel.trim() || undefined,
       }),
     });
     const data = await res.json();
@@ -618,9 +704,10 @@ function CookieSettingsModal({
     } else {
       setTwitterCt0("");
       setTwitterAuth("");
+      setTwitterLabel("");
       setSuccessMsg(
         data.username
-          ? `Connected as @${data.username}`
+          ? `Connected as @${data.username}${data.label !== "default" ? ` (${data.label})` : ""}`
           : "Cookies saved — username could not be verified"
       );
       onSaved();
@@ -628,10 +715,23 @@ function CookieSettingsModal({
     setSaving("");
   }
 
+  async function deleteAccount(id: string) {
+    await fetch(`/api/social/accounts?id=${id}`, { method: "DELETE" });
+    onSaved();
+  }
+
+  async function setDefault(id: string) {
+    await fetch("/api/social/accounts", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, isDefault: true }),
+    });
+    onSaved();
+  }
+
   async function verifyReddit() {
     setSaving("reddit");
     setRedditStatus(null);
-    // Save cookie to .env is manual — just verify the current env value
     const res = await fetch("/api/social/reddit-post", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -663,20 +763,57 @@ function CookieSettingsModal({
             <div className="flex items-center gap-2 mb-2">
               <Twitter className="w-4 h-4 text-blue-400" />
               <h4 className="text-sm font-semibold text-gray-900">Twitter/X</h4>
-              {twitter && (
-                <span className={`text-xs px-2 py-0.5 rounded-full ${twitter.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
-                  {twitter.status} {twitter.username ? `(@${twitter.username})` : ""}
-                </span>
-              )}
+              <span className="text-[10px] text-gray-400">{twitterAccounts.length} account{twitterAccounts.length !== 1 ? "s" : ""}</span>
             </div>
+
+            {/* Existing accounts */}
+            {twitterAccounts.length > 0 && (
+              <div className="space-y-1.5 mb-3">
+                {twitterAccounts.map((acct) => (
+                  <div key={acct.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${acct.status === "active" ? "bg-emerald-400" : "bg-red-400"}`} />
+                      <span className="text-xs font-medium text-gray-700">
+                        @{acct.username || acct.label}
+                      </span>
+                      {acct.isDefault && (
+                        <span className="text-[10px] bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded">default</span>
+                      )}
+                      <span className="text-[10px] text-gray-400">{acct.status}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {!acct.isDefault && (
+                        <button
+                          onClick={() => setDefault(acct.id)}
+                          className="text-gray-400 hover:text-yellow-500 p-1"
+                          title="Set as default"
+                        >
+                          <Star className="w-3 h-3" />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => deleteAccount(acct.id)}
+                        className="text-gray-400 hover:text-red-500 p-1"
+                        title="Remove account"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <p className="text-xs text-gray-500 mb-2">
               Open x.com → DevTools (F12) → Application → Cookies → x.com → copy <strong>ct0</strong> and <strong>auth_token</strong> values.
             </p>
             <div className="space-y-2">
+              <input value={twitterLabel} onChange={(e) => setTwitterLabel(e.target.value)} placeholder="Label (optional, e.g. Personal, Company)" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
               <input value={twitterCt0} onChange={(e) => setTwitterCt0(e.target.value)} placeholder="ct0 cookie" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
               <input value={twitterAuth} onChange={(e) => setTwitterAuth(e.target.value)} placeholder="auth_token cookie" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              <button onClick={saveTwitter} disabled={!twitterCt0 || !twitterAuth || saving === "twitter"} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium rounded-lg">
-                {saving === "twitter" ? "Verifying..." : twitter ? "Update Cookies" : "Connect Twitter"}
+              <button onClick={saveTwitter} disabled={!twitterCt0 || !twitterAuth || saving === "twitter"} className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium rounded-lg">
+                <Plus className="w-3 h-3" />
+                {saving === "twitter" ? "Verifying..." : "Add Twitter Account"}
               </button>
               {successMsg && (
                 <div className="p-2 rounded-lg text-xs bg-green-50 text-green-700">
@@ -691,14 +828,49 @@ function CookieSettingsModal({
             <div className="flex items-center gap-2 mb-2">
               <Linkedin className="w-4 h-4 text-blue-700" />
               <h4 className="text-sm font-semibold text-gray-900">LinkedIn</h4>
-              {linkedin && (
-                <span className={`text-xs px-2 py-0.5 rounded-full ${linkedin.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
-                  {linkedin.status} {linkedin.username ? `(${linkedin.username})` : ""}
-                </span>
-              )}
+              <span className="text-[10px] text-gray-400">{linkedinAccounts.length} account{linkedinAccounts.length !== 1 ? "s" : ""}</span>
             </div>
+
+            {/* Existing accounts */}
+            {linkedinAccounts.length > 0 && (
+              <div className="space-y-1.5 mb-3">
+                {linkedinAccounts.map((acct) => (
+                  <div key={acct.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${acct.status === "active" ? "bg-emerald-400" : "bg-red-400"}`} />
+                      <span className="text-xs font-medium text-gray-700">
+                        {acct.username || acct.label}
+                      </span>
+                      {acct.isDefault && (
+                        <span className="text-[10px] bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded">default</span>
+                      )}
+                      <span className="text-[10px] text-gray-400">{acct.status}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {!acct.isDefault && (
+                        <button
+                          onClick={() => setDefault(acct.id)}
+                          className="text-gray-400 hover:text-yellow-500 p-1"
+                          title="Set as default"
+                        >
+                          <Star className="w-3 h-3" />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => deleteAccount(acct.id)}
+                        className="text-gray-400 hover:text-red-500 p-1"
+                        title="Remove account"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <p className="text-xs text-gray-500 mb-2">
-              LinkedIn now uses OAuth. Click below to open the authorization page, then paste your <code className="font-mono bg-gray-100 px-1 rounded">LINKEDIN_ACCESS_TOKEN</code> and <code className="font-mono bg-gray-100 px-1 rounded">LINKEDIN_PERSON_URN</code> in <strong>.env.local</strong>.
+              LinkedIn uses OAuth. Click below to connect a new LinkedIn account.
             </p>
             <a
               href="/api/social/linkedin-auth"
@@ -712,14 +884,9 @@ function CookieSettingsModal({
                 if (data.url) window.open(data.url, "_blank");
               }}
             >
-              <Linkedin className="w-3.5 h-3.5" />
+              <Plus className="w-3 h-3" />
               Connect LinkedIn (OAuth)
             </a>
-            {linkedin && (
-              <p className="text-xs text-emerald-600 mt-2">
-                ✓ Connected{linkedin.username ? ` as ${linkedin.username}` : ""}
-              </p>
-            )}
           </div>
 
           {/* Reddit */}
@@ -741,8 +908,8 @@ function CookieSettingsModal({
             {redditStatus && (
               <div className={`mt-2 p-2 rounded-lg text-xs ${redditStatus.valid ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
                 {redditStatus.valid
-                  ? `✓ Connected as u/${redditStatus.username}`
-                  : `✗ ${redditStatus.error}`}
+                  ? `Connected as u/${redditStatus.username}`
+                  : `${redditStatus.error}`}
               </div>
             )}
           </div>

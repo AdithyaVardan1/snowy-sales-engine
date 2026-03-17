@@ -17,6 +17,7 @@ import {
   Bot,
   TrendingUp,
   SearchCheck,
+  Zap,
 } from "lucide-react";
 
 const nav = [
@@ -31,6 +32,7 @@ const nav = [
   { href: "/dashboard/partners", label: "Partners", icon: Users },
   { href: "/dashboard/scheduler", label: "Scheduler", icon: Clock },
   { href: "/dashboard/seo", label: "SEO", icon: SearchCheck },
+  { href: "/dashboard/sales", label: "Sales AI", icon: Zap },
   { href: "/dashboard/agents", label: "Agents", icon: Bot },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];

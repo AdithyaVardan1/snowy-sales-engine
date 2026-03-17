@@ -131,6 +131,8 @@ export default function InstagramPage() {
   const [loginPassword, setLoginPassword] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
+  const [needs2FA, setNeeds2FA] = useState(false);
+  const [verificationCode, setVerificationCode] = useState("");
 
   // Followers state
   const [followers, setFollowers] = useState<Follower[]>([]);
@@ -288,10 +290,16 @@ export default function InstagramPage() {
         body: JSON.stringify({
           username: loginUsername,
           password: loginPassword,
+          ...(verificationCode && { verificationCode }),
         }),
       });
       const data = await res.json();
       if (!res.ok) {
+        if (data.needs2FA) {
+          setNeeds2FA(true);
+          setLoginError("");
+          return;
+        }
         setLoginError(data.error || "Login failed");
         return;
       }
@@ -300,6 +308,8 @@ export default function InstagramPage() {
       setAccountStatus("active");
       setLoginUsername("");
       setLoginPassword("");
+      setVerificationCode("");
+      setNeeds2FA(false);
     } catch (e: any) {
       setLoginError(e.message || "Login failed");
     } finally {
@@ -1059,6 +1069,30 @@ export default function InstagramPage() {
     await loadTriggers();
   }
 
+  async function handleTestTrigger(triggerId: string) {
+    const username = prompt("Enter the Instagram username to send the test DM to (without @):");
+    if (!username) return;
+    const igUserId = prompt("Enter their Instagram User ID (numeric):");
+    if (!igUserId) return;
+
+    try {
+      const res = await fetch("/api/instagram/triggers/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ triggerId, igUserId, username, commentText: "[Manual test]" }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert(`Test DM sent to @${username}!`);
+        await loadTriggers();
+      } else {
+        alert(`Failed: ${data.error}`);
+      }
+    } catch (e: any) {
+      alert(`Error: ${e.message}`);
+    }
+  }
+
   async function handleDeleteTrigger(id: string) {
     if (!confirm("Delete this trigger?")) return;
     await fetch(`/api/instagram/triggers/${id}`, { method: "DELETE" });
@@ -1532,6 +1566,14 @@ export default function InstagramPage() {
                       {t.dmsSent} DMs sent
                     </span>
                     <button
+                      onClick={() => handleTestTrigger(t.id)}
+                      className="flex items-center gap-1 text-xs text-blue-600 hover:bg-blue-50 px-2 py-1 rounded-lg border border-blue-200"
+                      title="Send a test DM using this trigger"
+                    >
+                      <Zap className="w-3 h-3" />
+                      Test
+                    </button>
+                    <button
                       onClick={() => handleViewTriggerLogs(t.id)}
                       className="text-gray-400 hover:text-gray-600"
                       title="View logs"
@@ -1702,15 +1744,64 @@ export default function InstagramPage() {
                 placeholder="Instagram password"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
-              <button
-                onClick={handleLogin}
-                disabled={
-                  loginLoading || !loginUsername.trim() || !loginPassword.trim()
-                }
-                className="px-4 py-2 bg-gradient-to-r from-pink-500 to-purple-600 text-white text-sm rounded-lg hover:from-pink-600 hover:to-purple-700 disabled:opacity-50"
-              >
-                {loginLoading ? "Connecting..." : "Connect Instagram"}
-              </button>
+              {needs2FA && (
+                <div className="space-y-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <p className="text-sm font-medium text-amber-800">Instagram requires verification</p>
+                  <p className="text-xs text-amber-700">Choose one option below depending on what Instagram showed you:</p>
+
+                  {/* Option 1: Code entry */}
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-gray-700">Option 1: Enter 2FA code (SMS or authenticator app)</p>
+                    <input
+                      type="text"
+                      value={verificationCode}
+                      onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                      placeholder="6-digit code"
+                      className="w-full border border-amber-300 bg-white rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 text-center tracking-widest font-mono text-lg"
+                      maxLength={6}
+                      autoFocus
+                      onKeyDown={(e) => e.key === "Enter" && verificationCode.length === 6 && handleLogin()}
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-px bg-amber-300" />
+                    <span className="text-xs text-amber-500 font-medium">OR</span>
+                    <div className="flex-1 h-px bg-amber-300" />
+                  </div>
+
+                  {/* Option 2: App approval retry */}
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-gray-700">Option 2: Approve login in the Instagram app, then click retry</p>
+                    <button
+                      onClick={() => { setVerificationCode(""); handleLogin(); }}
+                      disabled={loginLoading}
+                      className="w-full px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${loginLoading ? "animate-spin" : ""}`} />
+                      {loginLoading ? "Retrying..." : "I approved it — Retry Login"}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {!needs2FA && (
+                <button
+                  onClick={handleLogin}
+                  disabled={loginLoading || !loginUsername.trim() || !loginPassword.trim()}
+                  className="px-4 py-2 bg-gradient-to-r from-pink-500 to-purple-600 text-white text-sm rounded-lg hover:from-pink-600 hover:to-purple-700 disabled:opacity-50"
+                >
+                  {loginLoading ? "Connecting..." : "Connect Instagram"}
+                </button>
+              )}
+              {needs2FA && verificationCode.length > 0 && (
+                <button
+                  onClick={handleLogin}
+                  disabled={loginLoading || verificationCode.length !== 6}
+                  className="px-4 py-2 bg-gradient-to-r from-pink-500 to-purple-600 text-white text-sm rounded-lg hover:from-pink-600 hover:to-purple-700 disabled:opacity-50"
+                >
+                  {loginLoading ? "Verifying..." : "Submit Code & Connect"}
+                </button>
+              )}
               <p className="text-xs text-amber-600">
                 Warning: Using automation on Instagram carries risk of account
                 restrictions. Use at your own risk.
