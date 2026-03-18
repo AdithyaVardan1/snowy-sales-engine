@@ -39,6 +39,27 @@ def build_client(cookies_data):
     return client, None
 
 
+def _patch_transaction_id():
+    """Monkey-patch twikit's transaction ID generation to handle Twitter JS changes."""
+    try:
+        from twikit.x_client_transaction.transaction import ClientTransaction
+        _orig = ClientTransaction.get_indices
+
+        async def safe_get_indices(self, *args, **kwargs):
+            try:
+                return await _orig(self, *args, **kwargs)
+            except Exception:
+                # Fallback: use dummy indices so requests still work
+                # (transaction ID will be wrong but Twitter usually still accepts)
+                return (0, [0, 1, 2])
+
+        ClientTransaction.get_indices = safe_get_indices
+    except Exception:
+        pass
+
+_patch_transaction_id()
+
+
 async def run(payload: dict) -> dict:
     action      = payload.get("action")       # "tweet" | "reply" | "thread" | "search"
     text        = payload.get("text", "")
