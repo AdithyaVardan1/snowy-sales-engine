@@ -39,8 +39,9 @@ def build_client(cookies_data):
     return client, None
 
 
-def _patch_transaction_id():
-    """Monkey-patch twikit's transaction ID generation to handle Twitter JS changes."""
+def _patch_twikit():
+    """Monkey-patch twikit to fix known issues with Twitter API changes."""
+    # 1. Fix KEY_BYTE indices crash
     try:
         from twikit.x_client_transaction.transaction import ClientTransaction
         _orig = ClientTransaction.get_indices
@@ -49,15 +50,69 @@ def _patch_transaction_id():
             try:
                 return await _orig(self, *args, **kwargs)
             except Exception:
-                # Fallback: use dummy indices so requests still work
-                # (transaction ID will be wrong but Twitter usually still accepts)
                 return (0, [0, 1, 2])
 
         ClientTransaction.get_indices = safe_get_indices
     except Exception:
         pass
 
-_patch_transaction_id()
+    # 2. Fix outdated GraphQL query IDs (Twitter rotates these)
+    try:
+        from twikit.client.gql import Endpoint
+        Endpoint.SEARCH_TIMELINE = Endpoint.url('rkp6b4vtR9u7v3naGoOzUQ/SearchTimeline')
+        Endpoint.CREATE_TWEET = Endpoint.url('zkcFc6F-RKRgWN8HUkJfZg/CreateTweet')
+        Endpoint.USER_BY_SCREEN_NAME = Endpoint.url('IGgvgiOx4QZndDHuD3x9TQ/UserByScreenName')
+        Endpoint.TWEET_DETAIL = Endpoint.url('xIYgDwjboktoFeXe_fgacw/TweetDetail')
+        Endpoint.HOME_TIMELINE = Endpoint.url('L8Lb9oomccM012S7fQ-QKA/HomeTimeline')
+    except Exception:
+        pass
+
+    # 3. Fix outdated FEATURES dict (Twitter adds new required feature flags)
+    try:
+        import twikit.client.gql as gql_mod
+        gql_mod.FEATURES = {
+            "rweb_video_screen_enabled": True,
+            "profile_label_improvements_pcf_label_in_post_enabled": True,
+            "responsive_web_profile_redirect_enabled": True,
+            "rweb_tipjar_consumption_enabled": True,
+            "verified_phone_label_enabled": False,
+            "creator_subscriptions_tweet_preview_api_enabled": True,
+            "responsive_web_graphql_timeline_navigation_enabled": True,
+            "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+            "premium_content_api_read_enabled": True,
+            "communities_web_enable_tweet_community_results_fetch": True,
+            "c9s_tweet_anatomy_moderator_badge_enabled": True,
+            "responsive_web_grok_analyze_button_fetch_trends_enabled": True,
+            "responsive_web_grok_analyze_post_followups_enabled": True,
+            "responsive_web_jetfuel_frame": True,
+            "responsive_web_grok_share_attachment_enabled": True,
+            "responsive_web_grok_annotations_enabled": True,
+            "articles_preview_enabled": True,
+            "responsive_web_edit_tweet_api_enabled": True,
+            "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+            "view_counts_everywhere_api_enabled": True,
+            "longform_notetweets_consumption_enabled": True,
+            "responsive_web_twitter_article_tweet_consumption_enabled": True,
+            "tweet_awards_web_tipping_enabled": False,
+            "content_disclosure_indicator_enabled": True,
+            "content_disclosure_ai_generated_indicator_enabled": True,
+            "responsive_web_grok_show_grok_translated_post": True,
+            "responsive_web_grok_analysis_button_from_backend": True,
+            "post_ctas_fetch_enabled": True,
+            "freedom_of_speech_not_reach_fetch_enabled": True,
+            "standardized_nudges_misinfo": True,
+            "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+            "longform_notetweets_rich_text_read_enabled": True,
+            "longform_notetweets_inline_media_enabled": True,
+            "responsive_web_grok_image_annotation_enabled": True,
+            "responsive_web_grok_imagine_annotation_enabled": True,
+            "responsive_web_grok_community_note_auto_translation_is_enabled": True,
+            "responsive_web_enhance_cards_enabled": False,
+        }
+    except Exception:
+        pass
+
+_patch_twikit()
 
 
 async def run(payload: dict) -> dict:
