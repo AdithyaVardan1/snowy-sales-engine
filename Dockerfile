@@ -26,7 +26,7 @@ RUN npm run build
 FROM node:18-slim AS runner
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y openssl python3 --no-install-recommends && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y openssl python3 python3-venv python3-pip --no-install-recommends && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
@@ -42,6 +42,9 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 COPY --from=builder /app/scripts ./scripts
+
+# Set up Python venv with twikit + instagrapi
+RUN python3 -m venv /app/scripts/venv && /app/scripts/venv/bin/pip install --no-cache-dir instagrapi twikit
 
 # Create data directory and home directory for nextjs user (npm cache needs it)
 RUN mkdir -p /app/data /home/nextjs && chown -R nextjs:nodejs /app/data /home/nextjs
