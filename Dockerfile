@@ -48,12 +48,10 @@ RUN mkdir -p /app/data /home/nextjs && chown -R nextjs:nodejs /app/data /home/ne
 
 USER nextjs
 
-# DB path inside app (Render free has no persistent disk — data resets on redeploy)
-ENV DATABASE_URL=file:/app/data/sales-engine.db
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
 EXPOSE 3000
 
-# Create/sync DB tables then start standalone server
-CMD node ./node_modules/prisma/build/index.js db push --skip-generate && node server.js
+# Start standalone server (DB schema managed externally via Supabase)
+CMD node server.js
