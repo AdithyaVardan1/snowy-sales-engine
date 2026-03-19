@@ -26,7 +26,7 @@ RUN npm run build
 FROM node:18-slim AS runner
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y openssl python3 python3-venv python3-pip --no-install-recommends && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y openssl python3 python3-venv python3-pip git --no-install-recommends && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
