@@ -44,7 +44,7 @@ COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 COPY --from=builder /app/scripts ./scripts
 
 # Set up Python venv with twikit + instagrapi
-RUN python3 -m venv /app/scripts/venv && /app/scripts/venv/bin/pip install --no-cache-dir instagrapi twikit
+RUN python3 -m venv /app/scripts/venv && /app/scripts/venv/bin/pip install --no-cache-dir -r /app/scripts/requirements.txt
 
 # Create data directory and home directory for nextjs user (npm cache needs it)
 RUN mkdir -p /app/data /home/nextjs && chown -R nextjs:nodejs /app/data /home/nextjs
