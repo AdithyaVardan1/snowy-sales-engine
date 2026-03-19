@@ -1,2 +1,2 @@
 instagrapi
-twikit
+git+https://github.com/pothitos/twikit.git@patch-1
