@@ -10,7 +10,7 @@ export async function POST(
     const job = await db.cronJob.findUnique({ where: { id: params.id } });
     if (!job) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://127.0.0.1:3000";
 
     // Internal headers for bypassing auth middleware
     const internalHeaders = {
