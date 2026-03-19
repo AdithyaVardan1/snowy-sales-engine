@@ -8,7 +8,7 @@ const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET || "snowy-internal-2026"
 async function runFetchCommunity() {
   console.log("[Scheduler] Fetching community posts...");
   try {
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://127.0.0.1:3000";
     await fetch(`${baseUrl}/api/community/fetch`, {
       method: "POST",
       headers: {
@@ -38,7 +38,7 @@ async function runPostScheduledSocial() {
 
     for (const post of duePosts) {
       try {
-        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
+        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://127.0.0.1:3000";
         await fetch(`${baseUrl}/api/social/publish`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -87,7 +87,7 @@ async function runScheduledBlogGeneration() {
 async function runAutoPostTech(config?: string) {
   console.log("[Scheduler] Running auto-post tech news...");
   try {
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://127.0.0.1:3000";
 
     let body: Record<string, unknown> = {};
     if (config) {
@@ -115,7 +115,7 @@ async function runAutoPostTech(config?: string) {
 async function runPollInstagramFollowers() {
   console.log("[Scheduler] Polling Instagram followers...");
   try {
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://127.0.0.1:3000";
     const res = await fetch(`${baseUrl}/api/instagram/followers`, {
       method: "POST",
       headers: {
@@ -135,7 +135,7 @@ async function runPollInstagramFollowers() {
 async function runInstagramAutoDM() {
   console.log("[Scheduler] Running Instagram auto-DM...");
   try {
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://127.0.0.1:3000";
     const res = await fetch(`${baseUrl}/api/instagram/auto-dm`, {
       method: "POST",
       headers: {
@@ -159,7 +159,7 @@ async function runAgentJob(config?: string) {
     const agentSlug = parsed.agentSlug;
     if (!agentSlug) return { success: false, error: "No agentSlug in config" };
 
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://127.0.0.1:3000";
     const res = await fetch(`${baseUrl}/api/agents/${agentSlug}/run`, {
       method: "POST",
       headers: {
@@ -179,7 +179,7 @@ async function runAgentJob(config?: string) {
 async function runTrendPost(config?: string) {
   console.log("[Scheduler] Running trend-based content posting...");
   try {
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://127.0.0.1:3000";
 
     let body: Record<string, unknown> = { mode: "post" };
     if (config) {
@@ -207,7 +207,7 @@ async function runTrendPost(config?: string) {
 async function runRedditAutoReply(config?: string) {
   console.log("[Scheduler] Running Reddit auto-reply...");
   try {
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://127.0.0.1:3000";
 
     let body: Record<string, unknown> = {};
     if (config) {
