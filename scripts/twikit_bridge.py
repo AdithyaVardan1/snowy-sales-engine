@@ -75,10 +75,10 @@ def _patch_twikit():
             "profile_label_improvements_pcf_label_in_post_enabled": True,
             "responsive_web_profile_redirect_enabled": True,
             "rweb_tipjar_consumption_enabled": True,
-            "verified_phone_label_enabled": False,
+            "verified_phone_label_enabled": True,
             "creator_subscriptions_tweet_preview_api_enabled": True,
             "responsive_web_graphql_timeline_navigation_enabled": True,
-            "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+            "responsive_web_graphql_skip_user_profile_image_extensions_enabled": True,
             "premium_content_api_read_enabled": True,
             "communities_web_enable_tweet_community_results_fetch": True,
             "c9s_tweet_anatomy_moderator_badge_enabled": True,
@@ -93,7 +93,7 @@ def _patch_twikit():
             "view_counts_everywhere_api_enabled": True,
             "longform_notetweets_consumption_enabled": True,
             "responsive_web_twitter_article_tweet_consumption_enabled": True,
-            "tweet_awards_web_tipping_enabled": False,
+            "tweet_awards_web_tipping_enabled": True,
             "content_disclosure_indicator_enabled": True,
             "content_disclosure_ai_generated_indicator_enabled": True,
             "responsive_web_grok_show_grok_translated_post": True,
@@ -107,7 +107,7 @@ def _patch_twikit():
             "responsive_web_grok_image_annotation_enabled": True,
             "responsive_web_grok_imagine_annotation_enabled": True,
             "responsive_web_grok_community_note_auto_translation_is_enabled": True,
-            "responsive_web_enhance_cards_enabled": False,
+            "responsive_web_enhance_cards_enabled": True,
         }
     except Exception:
         pass
