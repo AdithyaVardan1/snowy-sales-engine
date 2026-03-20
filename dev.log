@@ -1,0 +1,33 @@
+
+> sales-engine-temp@0.1.0 dev
+> next dev
+
+  ▲ Next.js 14.2.35
+  - Local:        http://localhost:3000
+  - Environments: .env.local, .env
+  - Experiments (use with caution):
+    · instrumentationHook
+
+ ✓ Starting...
+ ✓ Ready in 1496ms
+ ○ Compiling / ...
+ ✓ Compiled / in 776ms (488 modules)
+ ✓ Compiled in 60ms (234 modules)
+ GET / 307 in 874ms
+ ✓ Compiled /src/middleware in 64ms (72 modules)
+ ✓ Compiled /login in 141ms (486 modules)
+ GET /login 200 in 181ms
+ GET / 307 in 27ms
+ GET /login 200 in 16ms
+ ✓ Compiled /favicon.ico in 69ms (292 modules)
+ GET /favicon.ico 200 in 99ms
+ GET /favicon.ico 200 in 6ms
+   Reload env: .env.local
+ ✓ Compiled in 76ms (298 modules)
+   Reload env: .env
+ ✓ Compiled in 36ms (298 modules)
+   Reload env: .env
+ ✓ Compiled in 46ms (298 modules)
+   Reload env: .env.local
+ ✓ Compiled in 32ms (298 modules)
+[?25h
