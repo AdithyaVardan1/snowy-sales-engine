@@ -13,8 +13,10 @@ stdin:  JSON with one of:
 stdout: JSON { success, ...fields, error? }
 """
 
+import os
 import sys
 import json
+import time
 from instagrapi import Client
 from instagrapi.exceptions import (
     LoginRequired,
@@ -23,6 +25,44 @@ from instagrapi.exceptions import (
     PleaseWaitFewMinutes,
     ClientError,
 )
+
+# Path to persist device settings so Instagram trusts this server
+DEVICE_SETTINGS_PATH = os.path.join(os.path.dirname(__file__), ".ig_device_settings.json")
+
+# 2FA push-approval polling config
+POLL_INTERVAL_SECONDS = 3
+POLL_MAX_WAIT_SECONDS = 60
+
+
+def _load_device_settings() -> dict | None:
+    """Load previously saved device fingerprint from disk."""
+    if os.path.exists(DEVICE_SETTINGS_PATH):
+        try:
+            with open(DEVICE_SETTINGS_PATH, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return None
+
+
+def _save_device_settings(cl: Client):
+    """Persist the client's device fingerprint to disk."""
+    try:
+        settings = cl.get_settings()
+        with open(DEVICE_SETTINGS_PATH, "w") as f:
+            json.dump(settings, f)
+    except Exception as e:
+        sys.stderr.write(f"[IG] Failed to save device settings: {e}\n")
+
+
+def _build_client_with_device() -> Client:
+    """Create a Client, loading saved device settings if available."""
+    cl = Client()
+    saved = _load_device_settings()
+    if saved:
+        cl.set_settings(saved)
+        sys.stderr.write("[IG] Loaded saved device settings (trusted device)\n")
+    return cl
 
 
 def build_client_from_session(session_json: str) -> Client:
@@ -35,6 +75,59 @@ def build_client_from_session(session_json: str) -> Client:
     return cl
 
 
+def _poll_challenge_approval(cl: Client, challenge_url: str) -> dict:
+    """
+    Poll the challenge endpoint for up to POLL_MAX_WAIT_SECONDS,
+    waiting for the user to tap 'It Was Me' on their phone.
+    Returns a result dict.
+    """
+    elapsed = 0
+    sys.stderr.write(f"[IG] Waiting for push approval (up to {POLL_MAX_WAIT_SECONDS}s)...\n")
+
+    while elapsed < POLL_MAX_WAIT_SECONDS:
+        time.sleep(POLL_INTERVAL_SECONDS)
+        elapsed += POLL_INTERVAL_SECONDS
+
+        try:
+            # Send choice=0 ("It Was Me") — if user approved, this succeeds
+            cl._send_private_request(challenge_url, {"choice": "0"})
+
+            # Check if we got authorization back
+            auth_header = cl.last_response.headers.get("ig-set-authorization")
+            if auth_header:
+                cl.authorization_data = cl.parse_authorization(auth_header)
+                cl.login_flow()
+                _save_device_settings(cl)
+                session_json = json.dumps(cl.get_settings())
+                sys.stderr.write(f"[IG] Push approved after {elapsed}s!\n")
+                return {
+                    "success": True,
+                    "session_json": session_json,
+                    "username": str(getattr(cl, "username", "")),
+                    "user_id": str(cl.user_id),
+                }
+
+            # Check step_name — if it changed from delta_login_review, user may have approved
+            step = cl.last_json.get("step_name", "")
+            if step and step != "delta_login_review":
+                sys.stderr.write(f"[IG] Challenge step changed to '{step}', checking...\n")
+                break
+
+        except ChallengeRequired:
+            # Still waiting, continue polling
+            sys.stderr.write(f"[IG] Still waiting... ({elapsed}s)\n")
+            continue
+        except Exception as e:
+            sys.stderr.write(f"[IG] Poll error: {e}\n")
+            continue
+
+    return {
+        "success": False,
+        "error": "Approval timed out. Open Instagram on your phone and tap 'It Was Me', then try logging in again.",
+        "code": "CHALLENGE_TIMEOUT",
+    }
+
+
 def handle_login(payload: dict) -> dict:
     username = payload.get("username", "")
     password = payload.get("password", "")
@@ -43,7 +136,8 @@ def handle_login(payload: dict) -> dict:
     if not username or not password:
         return {"success": False, "error": "username and password required"}
 
-    cl = Client()
+    # Use saved device settings so Instagram recognizes the server
+    cl = _build_client_with_device()
 
     # If we have a saved challenge context, restore client state and resolve the challenge
     if challenge_context:
@@ -62,6 +156,7 @@ def handle_login(payload: dict) -> dict:
                     cl.last_response.headers.get("ig-set-authorization")
                 )
                 cl.login_flow()
+                _save_device_settings(cl)
                 session_json = json.dumps(cl.get_settings())
                 return {
                     "success": True,
@@ -75,23 +170,19 @@ def handle_login(payload: dict) -> dict:
         except Exception as e:
             # Challenge resolve failed, fall through to fresh login
             sys.stderr.write(f"Challenge resolve failed: {e}\n")
-            cl = Client()
+            cl = _build_client_with_device()
 
     try:
         cl.login(username, password, verification_code=verification_code if verification_code else "")
     except TwoFactorRequired:
-        # 2FA code flow — instagrapi handles this natively on next call with code
-        # No special state needed: cl.login() re-does accounts/login/ and catches
-        # TwoFactorRequired internally when verification_code is provided
         return {"success": False, "error": "two_factor_required", "code": "2FA"}
     except ChallengeRequired:
-        # Challenge flow — save client state + challenge URL for retry
+        # Challenge flow — check if it's a push approval we can poll for
         try:
             last_json = cl.last_json or {}
             challenge_info = last_json.get("challenge", {})
             challenge_url = challenge_info.get("api_path", "")
 
-            # Do the initial GET to the challenge URL to get step info
             if challenge_url:
                 try:
                     cl._send_private_request(challenge_url[1:], params={
@@ -102,6 +193,13 @@ def handle_login(payload: dict) -> dict:
                     pass  # Expected, continue
 
                 step_name = cl.last_json.get("step_name", "")
+
+                # If it's a push approval, poll and wait for user to approve
+                if step_name == "delta_login_review":
+                    sys.stderr.write("[IG] Push 2FA detected, starting polling...\n")
+                    return _poll_challenge_approval(cl, challenge_url)
+
+                # Otherwise, save context for manual retry
                 ctx = {
                     "settings": cl.get_settings(),
                     "last_json": cl.last_json,
@@ -123,7 +221,8 @@ def handle_login(payload: dict) -> dict:
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-    # Serialize session for storage
+    # Success — save device settings and session
+    _save_device_settings(cl)
     session_json = json.dumps(cl.get_settings())
     user_id = str(cl.user_id)
 

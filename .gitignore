@@ -41,3 +41,5 @@ next-env.d.ts
 
 # Python sidecar
 /scripts/venv
+/scripts/.ig_device_settings.json
+/scripts/twikit_cookies.json

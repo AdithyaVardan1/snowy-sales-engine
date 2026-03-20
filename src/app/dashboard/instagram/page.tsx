@@ -1761,14 +1761,14 @@ export default function InstagramPage() {
                   {challengeStepName === "delta_login_review" ? (
                     <>
                       {/* Challenge: app approval only */}
-                      <p className="text-xs text-amber-700">Instagram sent a login approval request. Approve it in the Instagram app, then click the button below.</p>
+                      <p className="text-xs text-amber-700">Instagram sent a login approval request. Approve it in the Instagram app, then click retry. The server will wait up to 60 seconds for your approval.</p>
                       <button
                         onClick={() => { setVerificationCode(""); handleLogin(); }}
                         disabled={loginLoading}
                         className="w-full px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
                       >
                         <RefreshCw className={`w-4 h-4 ${loginLoading ? "animate-spin" : ""}`} />
-                        {loginLoading ? "Confirming approval..." : "I approved it — Continue Login"}
+                        {loginLoading ? "Waiting for approval on your phone..." : "I approved it — Continue Login"}
                       </button>
                     </>
                   ) : (
@@ -1818,7 +1818,7 @@ export default function InstagramPage() {
                   disabled={loginLoading || !loginUsername.trim() || !loginPassword.trim()}
                   className="px-4 py-2 bg-gradient-to-r from-pink-500 to-purple-600 text-white text-sm rounded-lg hover:from-pink-600 hover:to-purple-700 disabled:opacity-50"
                 >
-                  {loginLoading ? "Connecting..." : "Connect Instagram"}
+                  {loginLoading ? "Connecting (may take up to 60s)..." : "Connect Instagram"}
                 </button>
               )}
               {needs2FA && verificationCode.length > 0 && (
