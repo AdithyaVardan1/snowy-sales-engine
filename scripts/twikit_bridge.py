@@ -251,6 +251,12 @@ def main():
         print(json.dumps({"success": False, "error": f"Invalid JSON: {e}"}))
         sys.exit(1)
 
+    # Debug: log what cookies the app is sending
+    cookies_data = payload.get("cookies", {})
+    if isinstance(cookies_data, dict):
+        sys.stderr.write(f"[Twikit Debug] auth_token length: {len(cookies_data.get('auth_token', ''))}, ct0 length: {len(cookies_data.get('ct0', ''))}\n")
+        sys.stderr.write(f"[Twikit Debug] auth_token prefix: {cookies_data.get('auth_token', '')[:10]}..., ct0 prefix: {cookies_data.get('ct0', '')[:10]}...\n")
+
     result = asyncio.run(run(payload))
     print(json.dumps(result))
     sys.exit(0 if result.get("success") else 1)
